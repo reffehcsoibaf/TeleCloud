@@ -65,6 +65,9 @@ class MyTelegram:
             texto = e.read().decode("utf-8", "replace")[:200]
             log.warning("my.telegram.org %s -> %s: %s (cookies enviados: %s)", caminho, e.code, texto,
                         list(self._biscoitos))
+            if "too many" in texto.lower():
+                raise ErroCredenciais("O Telegram bloqueou novos códigos por um tempo, por excesso de "
+                                      "tentativas. Espere algumas horas e tente de novo.") from e
             raise ErroCredenciais(f"O site do Telegram recusou o pedido ({e.code}) em {caminho}. {texto}") from e
         except (urllib.error.URLError, OSError) as e:
             raise ErroCredenciais(f"Não consegui falar com o site do Telegram: {e}") from e
