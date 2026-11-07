@@ -183,7 +183,7 @@ def abrir_janela(dados: Path) -> bool:
             erro = str(e)
             continue
         except Exception as e:  # erro inesperado
-            log.exception("login, passo %s", passo): mostra e deixa tentar de novo
+            log.exception("login, passo %s", passo)
             erro = f"{type(e).__name__}: {e}"
             continue
         erro = ""
