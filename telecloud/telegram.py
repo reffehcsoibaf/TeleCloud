@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 
 from telethon import TelegramClient, functions
-from telethon.tl.types import InputPeerChannel
+from telethon.tl.types import PeerChannel
 
 from .armazenamento import Armazenamento
 
@@ -55,7 +55,7 @@ class TelegramArmazenamento(Armazenamento):
     async def _garantir_grupo(self):
         id_salvo = self.cfg.get("grupo_id")
         if id_salvo:
-            self.grupo = await self.client.get_entity(id_salvo)
+            self.grupo = await self.client.get_entity(PeerChannel(id_salvo))
             return
         r = await self.client(functions.channels.CreateChannelRequest(
             title=NOME_GRUPO, about="Armazenamento do TeleCloud", megagroup=True, forum=True))
@@ -68,9 +68,12 @@ class TelegramArmazenamento(Armazenamento):
     async def _topico(self, nome):
         topicos = self.cfg.setdefault("topicos", {})
         if nome not in topicos:
-            r = await self.client(functions.channels.CreateForumTopicRequest(
-                channel=self.grupo, title=nome[:128]))
-            topicos[nome] = r.updates[0].id
+            r = await self.client(functions.messages.CreateForumTopicRequest(
+                peer=self.grupo, title=nome[:128]))
+            # o id do tópico é o id da mensagem de serviço criada
+            topicos[nome] = next(
+                u.message.id for u in r.updates
+                if hasattr(u, "message") and getattr(u.message, "id", None))
             self.cfg_caminho.write_text(json.dumps(self.cfg), encoding="utf-8")
         return topicos[nome]
 
@@ -102,5 +105,7 @@ class TelegramArmazenamento(Armazenamento):
             self._rodar(self.client.delete_messages(self.grupo, [int(r) for r in refs]))
 
     def fechar(self):
-        self._rodar(self.client.disconnect())
+        async def f():
+            await self.client.disconnect()
+        self._rodar(f())
         self.loop.call_soon_threadsafe(self.loop.stop)
