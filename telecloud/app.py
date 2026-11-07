@@ -22,6 +22,7 @@ def _argumentos(argv):
     ap.add_argument("--dados", default=None, help="pasta de dados (padrão: automática)")
     ap.add_argument("--sem-bandeja", action="store_true", help="roda no console, sem ícone na bandeja")
     ap.add_argument("--entrar", action="store_true", help="refaz o login no Telegram")
+    ap.add_argument("--console", action="store_true", help="login por texto no console (com --entrar)")
     ap.add_argument("--instalar", action="store_true", help="instala este programa para o usuário atual")
     ap.add_argument("--desinstalar", action="store_true", help="remove o programa instalado")
     ap.add_argument("--iniciar-com-windows", choices=["sim", "nao"], help="liga ou desliga o início automático")
@@ -39,7 +40,16 @@ def _pedir(texto: str, secreto=False) -> str:
     return (getpass.getpass(texto) if secreto else input(texto)).strip()
 
 
-def entrar(dados: Path):
+def entrar(dados: Path, console=False) -> bool:
+    """Login numa janela (telefone e códigos); as chaves da API vêm do my.telegram.org. Devolve True se entrou."""
+    if console:
+        entrar_console(dados)
+        return True
+    from .login import abrir_janela
+    return abrir_janela(dados)
+
+
+def entrar_console(dados: Path):
     """Pede, por texto no console, o que falta: chaves da API (uma vez) e o login no Telegram."""
     from .telegram import TelegramArmazenamento
     sistema.garantir_console()
@@ -65,13 +75,15 @@ def entrar(dados: Path):
 def _conectar(dados: Path):
     from .telegram import TelegramArmazenamento
     if not (dados / "config.json").exists():
-        entrar(dados)
+        if not entrar(dados):
+            raise RuntimeError("Login cancelado.")
     arm = TelegramArmazenamento(dados)
     try:
         arm.conectar()
     except RuntimeError:  # sem sessão válida
         arm.fechar()
-        entrar(dados)
+        if not entrar(dados):
+            raise RuntimeError("Login cancelado.")
         arm = TelegramArmazenamento(dados)
         arm.conectar()
     return arm
@@ -97,7 +109,7 @@ def principal(argv=None):
     logging.basicConfig(filename=str(dados / "telecloud.log"), level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s", encoding="utf-8")
     if args.entrar:
-        entrar(dados)
+        entrar(dados, console=args.console)
         return 0
     if sistema.ja_em_execucao():
         if not args.sem_bandeja:
