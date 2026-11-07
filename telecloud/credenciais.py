@@ -6,11 +6,13 @@ Fluxo (o mesmo que o site faz no navegador):
   3. obter_ou_criar(): lê as chaves do aplicativo já cadastrado ou cadastra "TeleCloud".
 """
 import json
+import logging
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
 
+log = logging.getLogger("telecloud")
 SITE = "https://my.telegram.org"
 TITULO = "TeleCloud"
 NOME_CURTO = "telecloud"
@@ -54,11 +56,16 @@ class MyTelegram:
             req.add_header("Cookie", "; ".join(f"{k}={v}" for k, v in self._biscoitos.items()))
         try:
             with self._abridor.open(req, timeout=30) as r:
-                self._guardar_biscoitos(r.headers.get_all("Set-Cookie") or [])
+                novos = r.headers.get_all("Set-Cookie") or []
+                self._guardar_biscoitos(novos)
+                log.info("my.telegram.org %s -> %s, cookies novos: %s, enviados: %s", caminho, r.status,
+                         [c.split("=")[0] for c in novos], list(self._biscoitos))
                 return r.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
             texto = e.read().decode("utf-8", "replace")[:200]
-            raise ErroCredenciais(f"O site do Telegram recusou o pedido ({e.code}). {texto}") from e
+            log.warning("my.telegram.org %s -> %s: %s (cookies enviados: %s)", caminho, e.code, texto,
+                        list(self._biscoitos))
+            raise ErroCredenciais(f"O site do Telegram recusou o pedido ({e.code}) em {caminho}. {texto}") from e
         except (urllib.error.URLError, OSError) as e:
             raise ErroCredenciais(f"Não consegui falar com o site do Telegram: {e}") from e
 
