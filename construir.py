@@ -12,7 +12,7 @@ _icone(ICONES["ok"]).save(ico, sizes=[(16, 16), (32, 32), (48, 48), (64, 64)])
 
 subprocess.run(
     [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--noconsole",
-     "--name", "TeleCloud", "--icon", str(ico), "--hidden-import", "pystray._win32",
+     "--name", "TeleCloud", "--icon", str(ico), "--hidden-import", "pystray._win32", "--exclude-module", "tkinter",
      "--distpath", str(raiz / "dist"), "--workpath", str(raiz / "build" / "pyi"),
      "--specpath", str(raiz / "build"), str(raiz / "montar.py")],
     check=True)

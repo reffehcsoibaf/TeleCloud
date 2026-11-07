@@ -3,8 +3,6 @@
 `Fluxo` guarda a lógica (sem tela, para poder testar); `abrir_janela` é a tela em tkinter.
 """
 import json
-import queue
-import threading
 from pathlib import Path
 
 from .credenciais import ErroCredenciais, MyTelegram
@@ -117,107 +115,79 @@ PASSOS = {
 }
 
 
+def _pedir(wx, passo: str, erro: str = ""):
+    """Uma caixa de diálogo por passo, só com controles nativos (o leitor de tela lê o título, o texto
+    e o rótulo ao abrir). Devolve o texto digitado ou None se cancelou."""
+    titulo, instrucao, rotulo, secreto = PASSOS[passo]
+    dlg = wx.Dialog(None, title="TeleCloud - " + titulo)
+    caixa = wx.BoxSizer(wx.VERTICAL)
+    texto = wx.StaticText(dlg, label=instrucao)
+    texto.Wrap(380)
+    caixa.Add(texto, 0, wx.ALL, 12)
+    nome = wx.StaticText(dlg, label=rotulo)   # vem logo antes do campo: o NVDA usa como nome dele
+    caixa.Add(nome, 0, wx.LEFT | wx.RIGHT, 12)
+    campo = wx.TextCtrl(dlg, style=wx.TE_PASSWORD if secreto else 0, size=(380, -1), name=rotulo.rstrip(":"))
+    caixa.Add(campo, 0, wx.ALL | wx.EXPAND, 12)
+    botoes = dlg.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+    dlg.FindWindowById(wx.ID_OK).SetLabel("Continuar")
+    dlg.FindWindowById(wx.ID_CANCEL).SetLabel("Cancelar")
+    caixa.Add(botoes, 0, wx.ALL | wx.ALIGN_RIGHT, 12)
+    dlg.SetSizerAndFit(caixa)
+    dlg.SetAffirmativeId(wx.ID_OK)
+    dlg.SetEscapeId(wx.ID_CANCEL)
+    dlg.FindWindowById(wx.ID_OK).SetDefault()
+    dlg.CentreOnScreen()
+    campo.SetFocus()
+    try:
+        if dlg.ShowModal() != wx.ID_OK:
+            return None
+        return campo.GetValue()
+    finally:
+        dlg.Destroy()
+
+
 def abrir_janela(dados: Path) -> bool:
-    """Mostra a janela de login. Devolve True se entrou."""
-    import tkinter as tk
-    from tkinter import ttk
+    """Mostra o login, um passo por vez. Devolve True se entrou."""
+    import wx
 
+    app = wx.App(False)
     fluxo = Fluxo(dados)
-    resultado = {"ok": False}
-    fila = queue.Queue()
-    estado = {"passo": "telefone", "ocupado": False}
-
-    raiz = tk.Tk()
-    raiz.title("TeleCloud")
-    raiz.resizable(False, False)
-    quadro = ttk.Frame(raiz, padding=18)
-    quadro.grid()
-    titulo = ttk.Label(quadro, font=("Segoe UI", 13, "bold"))
-    titulo.grid(sticky="w")
-    instrucao = ttk.Label(quadro, wraplength=380, justify="left")
-    instrucao.grid(sticky="w", pady=(6, 10))
-    rotulo = ttk.Label(quadro)
-    rotulo.grid(sticky="w")
-    valor = tk.StringVar()
-    campo = ttk.Entry(quadro, textvariable=valor, width=40)
-    campo.grid(sticky="we", pady=(2, 6))
-    msg = ttk.Label(quadro, foreground="#b00020", wraplength=380, justify="left")
-    msg.grid(sticky="w")
-    botoes = ttk.Frame(quadro)
-    botoes.grid(sticky="e", pady=(10, 0))
-    continuar = ttk.Button(botoes, text="Continuar")
-    continuar.grid(row=0, column=0, padx=(0, 6))
-    cancelar = ttk.Button(botoes, text="Cancelar", command=raiz.destroy)
-    cancelar.grid(row=0, column=1)
-
-    def mostrar(passo, erro=""):
-        estado["passo"] = passo
-        t, i, r, secreto = PASSOS[passo]
-        raiz.title("TeleCloud - " + t)
-        titulo.config(text=t)
-        instrucao.config(text=i)
-        rotulo.config(text=r)
-        campo.config(show="*" if secreto else "")
-        msg.config(text=erro)
-        valor.set("")
-        campo.focus_set()
-
-    def ocupar(sim):
-        estado["ocupado"] = sim
-        continuar.config(state="disabled" if sim else "normal")
-        campo.config(state="disabled" if sim else "normal")
-        if sim:
-            msg.config(text="Aguarde...", foreground="#444")
-        else:
-            msg.config(foreground="#b00020")
-
-    def trabalho(passo, texto):
+    passo = "telefone"
+    erro = ""
+    ok = False
+    while True:
+        if erro:
+            wx.MessageBox(erro, "TeleCloud", wx.OK | wx.ICON_ERROR)
+        texto = _pedir(wx, passo, erro)
+        if texto is None:
+            break
+        if not texto.strip():
+            erro = "Digite o valor pedido."
+            continue
         try:
-            if passo == "telefone":
-                prox = fluxo.passo_telefone(texto)
-            elif passo == "codigo_site":
-                prox = fluxo.passo_codigo_site(texto)
-            elif passo == "codigo_app":
-                prox = fluxo.passo_codigo_app(texto)
-            else:
-                prox = fluxo.passo_senha(texto)
-            if prox == PRONTO:
-                fluxo.finalizar()
-            fila.put((passo, prox, ""))
-        except ErroCredenciais as e:
-            fila.put((passo, passo, str(e)))
-        except Exception as e:  # erro inesperado: mostra e deixa tentar de novo
-            fila.put((passo, passo, f"{type(e).__name__}: {e}"))
-
-    def enviar(_evento=None):
-        if estado["ocupado"] or not valor.get().strip():
-            return
-        ocupar(True)
-        threading.Thread(target=trabalho, args=(estado["passo"], valor.get()), daemon=True).start()
-
-    def olhar_fila():
-        try:
-            while True:
-                _, prox, erro = fila.get_nowait()
-                ocupar(False)
+            with wx.BusyCursor():
+                if passo == "telefone":
+                    prox = fluxo.passo_telefone(texto)
+                elif passo == "codigo_site":
+                    prox = fluxo.passo_codigo_site(texto)
+                elif passo == "codigo_app":
+                    prox = fluxo.passo_codigo_app(texto)
+                else:
+                    prox = fluxo.passo_senha(texto)
                 if prox == PRONTO:
-                    resultado["ok"] = True
-                    raiz.destroy()
-                    return
-                mostrar(prox, erro)
-        except queue.Empty:
-            pass
-        raiz.after(100, olhar_fila)
-
-    continuar.config(command=enviar)
-    raiz.bind("<Return>", enviar)
-    mostrar("telefone")
-    raiz.update_idletasks()
-    raiz.geometry("+%d+%d" % ((raiz.winfo_screenwidth() - raiz.winfo_reqwidth()) // 2,
-                              (raiz.winfo_screenheight() - raiz.winfo_reqheight()) // 3))
-    raiz.attributes("-topmost", True)
-    raiz.after(100, olhar_fila)
-    raiz.mainloop()
-    if not resultado["ok"]:
+                    fluxo.finalizar()
+        except ErroCredenciais as e:
+            erro = str(e)
+            continue
+        except Exception as e:  # erro inesperado: mostra e deixa tentar de novo
+            erro = f"{type(e).__name__}: {e}"
+            continue
+        erro = ""
+        if prox == PRONTO:
+            ok = True
+            break
+        passo = prox
+    if not ok:
         fluxo.cancelar()
-    return resultado["ok"]
+    app.Destroy()
+    return ok
