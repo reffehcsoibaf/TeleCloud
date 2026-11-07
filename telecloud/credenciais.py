@@ -5,7 +5,6 @@ Fluxo (o mesmo que o site faz no navegador):
   2. entrar(codigo): valida o código e abre a sessão no site.
   3. obter_ou_criar(): lê as chaves do aplicativo já cadastrado ou cadastra "TeleCloud".
 """
-import http.cookiejar
 import json
 import re
 import urllib.error
@@ -37,8 +36,8 @@ def extrair_token_de_criacao(html: str):
 
 class MyTelegram:
     def __init__(self):
-        self._cookies = http.cookiejar.CookieJar()
-        self._abridor = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookies))
+        self._abridor = urllib.request.build_opener()
+        self._biscoitos = {}  # nome -> valor, guardados à mão a partir dos Set-Cookie
         self._telefone = None
         self._random_hash = None
 
@@ -51,14 +50,24 @@ class MyTelegram:
             "Origin": SITE,
             "Referer": SITE + "/auth",
         })
+        if self._biscoitos:
+            req.add_header("Cookie", "; ".join(f"{k}={v}" for k, v in self._biscoitos.items()))
         try:
             with self._abridor.open(req, timeout=30) as r:
+                self._guardar_biscoitos(r.headers.get_all("Set-Cookie") or [])
                 return r.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
             texto = e.read().decode("utf-8", "replace")[:200]
             raise ErroCredenciais(f"O site do Telegram recusou o pedido ({e.code}). {texto}") from e
         except (urllib.error.URLError, OSError) as e:
             raise ErroCredenciais(f"Não consegui falar com o site do Telegram: {e}") from e
+
+    def _guardar_biscoitos(self, linhas):
+        for linha in linhas:
+            par = linha.split(";", 1)[0]
+            nome, _, valor = par.partition("=")
+            if nome.strip():
+                self._biscoitos[nome.strip()] = valor.strip()
 
     def enviar_codigo(self, telefone: str):
         resposta = self._requisitar("/auth/send_password", {"phone": telefone})
@@ -81,7 +90,7 @@ class MyTelegram:
             raise ErroCredenciais("Código incorreto.")
 
     def obter_ou_criar(self):
-        html = self._requisitar("/apps")
+        html = self._requisitar("/apps")  # 401 aqui = sessão do site não foi aceita
         chaves = extrair_chaves(html)
         if chaves:
             return chaves
