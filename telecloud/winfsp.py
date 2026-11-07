@@ -64,6 +64,7 @@ assert CAB == 104, CAB
 CasePreservedNames = 1 << 1
 UnicodeOnDisk = 1 << 2
 PostCleanupWhenModifiedOnly = 1 << 10
+UmFileContextIsUserContext2 = 1 << 16  # contexto por abertura (alça), não por arquivo
 
 P, S, FI = c_void_p, c_wchar_p, POINTER(FileInfo)
 U32, U64, B = c_uint32, c_uint64, c_ubyte
@@ -125,7 +126,7 @@ class SistemaDeArquivos:
         vp.MaxComponentLength = 255
         vp.VolumeSerialNumber = 0x7E1EC10D
         vp.FileInfoTimeout = 1000
-        vp.Flags = CasePreservedNames | UnicodeOnDisk | PostCleanupWhenModifiedOnly
+        vp.Flags = CasePreservedNames | UnicodeOnDisk | PostCleanupWhenModifiedOnly | UmFileContextIsUserContext2
         vp.FileSystemName = "TeleCloud"
 
         tabela = (c_void_p * 64)()
