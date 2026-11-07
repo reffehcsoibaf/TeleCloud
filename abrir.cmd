@@ -1,5 +1,6 @@
 @echo off
 cd /d "%~dp0"
-"%~dp0venv\Scripts\python.exe" entrar.py
+echo Montando o TeleCloud em T: ... feche esta janela (ou Ctrl+C) para encerrar.
+"%~dp0venv\Scripts\python.exe" montar.py --unidade T:
 echo.
 pause

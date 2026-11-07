@@ -121,5 +121,33 @@ class Nuvem:
         self.arm.apagar(self.indice.refs_da_subarvore(no.id))
         self.indice.remover(no.id)
 
+    def baixar_parte(self, parte: Parte) -> bytes:
+        return self._decifrar(self.arm.baixar(parte.ref))
+
+    def enviar_no(self, no_id: int, local: str):
+        """Envia o conteúdo de um arquivo local como o conteúdo do nó (substitui o anterior)."""
+        no = self.indice.obter(no_id)
+        if not no or no.pasta:
+            raise ErroNuvem("nó não existe")
+        caminho = self.indice.caminho_de(no_id)
+        antigas = self.indice.refs_da_subarvore(no_id)
+        tamanho = os.path.getsize(local)
+        legenda = " ".join(f"#{t}" for t in no.tags.split())
+        partes = []
+        if tamanho:
+            with open(local, "rb") as f:
+                i = 0
+                while True:
+                    bloco = f.read(self.tamanho_parte)
+                    if not bloco:
+                        break
+                    ref = self.arm.enviar(
+                        self._topico(caminho), f"{no.nome}.{i:03d}", self._cifrar(bloco), legenda)
+                    partes.append(Parte(i, ref, len(bloco)))
+                    i += 1
+        self.indice.definir_partes(no_id, partes, tamanho)
+        if antigas:
+            self.arm.apagar(antigas)
+
     def buscar_tag(self, tag: str) -> list[No]:
         return self.indice.buscar_tag(tag.lstrip("#"))

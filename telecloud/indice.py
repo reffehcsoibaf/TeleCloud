@@ -1,5 +1,6 @@
-"""Índice local (SQLite): árvore de pastas, arquivos e partes guardadas no armazenamento."""
+﻿"""Índice local (SQLite): árvore de pastas, arquivos e partes guardadas no armazenamento."""
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 
@@ -27,6 +28,7 @@ RAIZ = 1
 
 class Indice:
     def __init__(self, caminho=":memory:"):
+        self._trava = threading.RLock()
         self.bd = sqlite3.connect(caminho, check_same_thread=False)
         self.bd.execute("PRAGMA foreign_keys=ON")
         self.bd.executescript(
@@ -34,7 +36,7 @@ class Indice:
             CREATE TABLE IF NOT EXISTS nos(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 pai INTEGER REFERENCES nos(id) ON DELETE CASCADE,
-                nome TEXT NOT NULL,
+                nome TEXT NOT NULL COLLATE NOCASE,
                 pasta INTEGER NOT NULL,
                 tamanho INTEGER NOT NULL DEFAULT 0,
                 modificado REAL NOT NULL,
@@ -151,5 +153,49 @@ class Indice:
             )
         ]
 
+    def caminho_de(self, id: int) -> str:
+        partes = []
+        while id and id != RAIZ:
+            n = self.obter(id)
+            if not n:
+                break
+            partes.append(n.nome)
+            id = n.pai
+        return "/".join(reversed(partes))
+
+    def definir_tamanho(self, no: int, tamanho: int):
+        self.bd.execute(
+            "UPDATE nos SET tamanho=?, modificado=? WHERE id=?", (tamanho, time.time(), no)
+        )
+        self.bd.commit()
+
+    def pendentes_de_envio(self) -> list[int]:
+        """Arquivos com conteúdo mas sem partes no armazenamento (envio interrompido)."""
+        return [
+            l[0]
+            for l in self.bd.execute(
+                "SELECT id FROM nos WHERE pasta=0 AND tamanho>0 "
+                "AND id NOT IN (SELECT no FROM partes)"
+            )
+        ]
+
     def fechar(self):
         self.bd.close()
+
+
+def _travar(f):
+    import functools
+
+    @functools.wraps(f)
+    def g(self, *a, **k):
+        with self._trava:
+            return f(self, *a, **k)
+
+    return g
+
+
+for _n in ("resolver", "obter", "listar", "criar", "definir_partes", "partes", "renomear",
+           "definir_tags", "remover", "refs_da_subarvore", "buscar_tag", "caminho_de",
+           "definir_tamanho", "pendentes_de_envio"):
+    setattr(Indice, _n, _travar(getattr(Indice, _n)))
+
