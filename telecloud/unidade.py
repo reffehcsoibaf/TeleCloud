@@ -54,6 +54,7 @@ class Estado:
         self.versao = 0
         self.sujo = False
         self.na_fila = False
+        self.acesso = time.time()
 
     def abrir(self):
         if self.fh is None:
@@ -74,8 +75,18 @@ class Alca:
 
 
 class Unidade:
-    def __init__(self, nuvem: Nuvem, pasta_cache: Path, rotulo="TeleCloud"):
+    def __init__(self, nuvem: Nuvem, pasta_cache: Path, rotulo="TeleCloud",
+                 cache_max=5 * 1024**3, silencio_indice=20.0):
         self.nuvem = nuvem
+        self.cache_max = cache_max
+        self.silencio_indice = silencio_indice  # segundos sem alterações antes de guardar o índice
+        self.ao_erro = None  # opcional: função(texto) chamada quando a fila falha
+        self.atual = None  # arquivo sendo enviado agora
+        self.progresso = (0, 0)
+        self.erro = None
+        self.indice_salvo_em = None
+        self._falhas = 0
+        self._enviando_id = None
         self.ix = nuvem.indice
         self.cache_dir = Path(pasta_cache)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -87,6 +98,11 @@ class Unidade:
         self.fila: queue.Queue = queue.Queue()
         self.dll = w._carregar()
         self._parar = False
+        self._visto = self.ix.mudancas
+        self._mudou_em = time.time()
+        self._ultimo_visto_mudanca = self.ix.mudancas
+        self._tentou_indice = 0.0
+        self._ultima_limpeza = 0.0
 
         pend = set(self.ix.pendentes_de_envio())
         # cache de arquivos já enviados não é confiável após reiniciar (partes em memória): limpa
@@ -101,6 +117,9 @@ class Unidade:
             e.completo = True
             e.sujo = True
             self.fila.put(("env", i))
+        sobras = self.ix.apagar_pendentes()
+        if sobras:
+            self.fila.put(("apg", sobras))
         self.worker = threading.Thread(target=self._trabalhar, daemon=True, name="envios")
         self.worker.start()
 
@@ -173,16 +192,101 @@ class Unidade:
             try:
                 tipo, x = self.fila.get(timeout=0.5)
             except queue.Empty:
+                self._tarefas_ociosas()
                 continue
             try:
                 if tipo == "env":
                     self._enviar(x)
                 elif tipo == "apg":
                     self.nuvem.arm.apagar(x)
-            except Exception:
-                log.exception("falha na fila (%s); tentando de novo em 15 s", tipo)
-                time.sleep(15)
+                    self.ix.apagados(x)
+                self._falhas = 0
+                self.erro = None
+            except Exception as ex:
+                self._falhas += 1
+                espera = getattr(ex, "seconds", None) or min(300, 15 * 2 ** (self._falhas - 1))
+                self.erro = f"{type(ex).__name__}: {ex}"
+                log.exception("falha na fila (%s); tentando de novo em %s s", tipo, espera)
+                if self.ao_erro and self._falhas in (1, 5):
+                    try:
+                        self.ao_erro(f"Falha ao falar com o Telegram. Nova tentativa em {int(espera)} segundos.")
+                    except Exception:
+                        pass
+                for _ in range(int(espera * 2)):
+                    if self._parar:
+                        break
+                    time.sleep(0.5)
                 self.fila.put((tipo, x))
+
+    def _tarefas_ociosas(self):
+        agora = time.time()
+        if self.ix.mudancas != self._visto and not self._mudou_em_recente(agora):
+            if agora - self._tentou_indice > 60:
+                self.salvar_indice_agora()
+        if agora - self._ultima_limpeza > 30:
+            self._ultima_limpeza = agora
+            try:
+                self.limpar_cache()
+            except Exception:
+                log.exception("falha ao limpar o cache")
+
+    def _mudou_em_recente(self, agora):
+        m = self.ix.mudancas
+        if m != self._ultimo_visto_mudanca:
+            self._ultimo_visto_mudanca = m
+            self._mudou_em = agora
+        return agora - self._mudou_em < self.silencio_indice
+
+    def salvar_indice_agora(self) -> bool:
+        """Guarda uma cópia do índice no armazenamento remoto (para recuperar em outro computador)."""
+        self._tentou_indice = time.time()
+        alvo = self.ix.mudancas
+        try:
+            self.nuvem.arm.salvar_indice(self.ix.exportar())
+        except Exception:
+            log.exception("não consegui guardar o índice")
+            return False
+        self._visto = alvo
+        self.indice_salvo_em = time.time()
+        log.info("índice guardado no armazenamento remoto")
+        return True
+
+    # ---------- cache ----------
+    def tamanho_cache(self) -> int:
+        total = 0
+        for f in self.cache_dir.glob("*.bin"):
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
+        return total
+
+    def limpar_cache(self):
+        """Apaga do disco os arquivos mais antigos já guardados no Telegram, até caber no limite."""
+        total = self.tamanho_cache()
+        if total <= self.cache_max:
+            return
+        with self.trava:
+            candidatos = [e for e in self.estados.values()
+                          if e.refs <= 0 and not e.sujo and not e.na_fila
+                          and e.no_id != self._enviando_id and self.ix.partes(e.no_id)]
+            candidatos.sort(key=lambda e: e.acesso)
+            for e in candidatos:
+                if total <= self.cache_max:
+                    break
+                try:
+                    tam = e.cache.stat().st_size
+                except OSError:
+                    tam = 0
+                with e.lock:
+                    e.fechar_fh()
+                    try:
+                        e.cache.unlink(missing_ok=True)
+                    except OSError:
+                        continue
+                self.estados.pop(e.no_id, None)
+                total -= tam
+                log.info("cache: liberado %s", self.ix.caminho_de(e.no_id))
 
     def _enviar(self, no_id):
         e = self.estados.get(no_id)
@@ -193,7 +297,15 @@ class Unidade:
             v = e.versao
             if e.fh:
                 e.fh.flush()
-        self.nuvem.enviar_no(no_id, str(e.cache))
+        self._enviando_id = no_id
+        self.atual = self.ix.caminho_de(no_id)
+        self.progresso = (0, 0)
+        try:
+            self.nuvem.enviar_no(no_id, str(e.cache),
+                                 lambda feito, total: setattr(self, "progresso", (feito, total)))
+        finally:
+            self._enviando_id = None
+            self.atual = None
         with e.lock:
             if e.versao != v:
                 e.na_fila = True
@@ -204,10 +316,26 @@ class Unidade:
                 e.partes_ok = {p.seq for p in self.ix.partes(no_id)}
         log.info("enviado: %s", self.ix.caminho_de(no_id))
 
+    def situacao(self) -> dict:
+        """Resumo para a bandeja: o que está sendo enviado, o que espera e o uso do cache."""
+        esperando = sorted(self.ix.caminho_de(e.no_id) for e in list(self.estados.values())
+                           if e.sujo and e.no_id != self._enviando_id)
+        return {
+            "enviando": self.atual, "progresso": self.progresso, "esperando": esperando,
+            "apagando": len(self.ix.apagar_pendentes()), "cache": self.tamanho_cache(),
+            "cache_max": self.cache_max, "erro": self.erro, "indice_salvo_em": self.indice_salvo_em,
+        }
+
+    def _apagar_remoto(self, refs):
+        if refs:
+            self.ix.marcar_apagar(refs)
+            self.fila.put(("apg", refs))
+
     def aguardar_fila(self, limite=600):
         t = time.time()
         while time.time() - t < limite:
-            if self.fila.empty() and not any(e.sujo for e in self.estados.values()):
+            if (self.fila.empty() and not any(e.sujo for e in self.estados.values())
+                    and not self.ix.apagar_pendentes()):
                 return True
             time.sleep(0.2)
         return False
@@ -253,11 +381,11 @@ class Unidade:
         no = self.ix.criar(pai.id, base, eh_pasta)
         est = None
         if not eh_pasta:
-            est = self._estado(no.id)
+            with self.trava:
+                est = self._estado(no.id)
+                est.refs += 1
             est.completo = True
             est.cache.write_bytes(b"")
-            with self.trava:
-                est.refs += 1
         p_ctx[0] = self._nova_alca(Alca(no.id, eh_pasta, est))
         self._info(no, fi[0])
         return w.STATUS_SUCCESS
@@ -269,9 +397,10 @@ class Unidade:
             return w.STATUS_OBJECT_NAME_NOT_FOUND
         est = None
         if not no.pasta:
-            est = self._estado(no.id)
             with self.trava:
+                est = self._estado(no.id)
                 est.refs += 1
+                est.acesso = time.time()
         p_ctx[0] = self._nova_alca(Alca(no.id, no.pasta, est))
         self._info(no, fi[0])
         return w.STATUS_SUCCESS
@@ -297,8 +426,7 @@ class Unidade:
         if flags & w.FspCleanupDelete:
             refs = self.ix.refs_da_subarvore(a.no_id)
             self.ix.remover(a.no_id)
-            if refs:
-                self.fila.put(("apg", refs))
+            self._apagar_remoto(refs)
             if a.estado:
                 a.estado.fechar_fh()
                 try:
@@ -326,6 +454,7 @@ class Unidade:
             p_lido[0] = 0
             return 0xC0000011  # STATUS_END_OF_FILE
         n = min(tam, e.tamanho - off)
+        e.acesso = time.time()
         self._garantir(e, off, off + n)
         with e.lock:
             fh = e.abrir()
@@ -414,8 +543,7 @@ class Unidade:
             refs = self.ix.refs_da_subarvore(alvo.id)
             self.ix.remover(alvo.id)
             self.estados.pop(alvo.id, None)
-            if refs:
-                self.fila.put(("apg", refs))
+            self._apagar_remoto(refs)
         pai_c, _, base = novo.rpartition("\\")
         pai = self.ix.resolver(pai_c)
         if not pai or not pai.pasta:

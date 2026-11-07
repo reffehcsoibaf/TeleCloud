@@ -1,0 +1,162 @@
+"""Integração com o Windows: instância única, iniciar com o Windows, instalar/desinstalar, console e avisos."""
+import ctypes
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+NOME = "TeleCloud"
+CHAVE_INICIO = r"Software\Microsoft\Windows\CurrentVersion\Run"
+CHAVE_DESINSTALAR = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\TeleCloud"
+VERSAO = "2026.11.07.0"
+
+MB_OK, MB_YESNO, MB_ICONINFO, MB_ICONERRO, MB_ICONPERGUNTA = 0x0, 0x4, 0x40, 0x10, 0x20
+IDYES = 6
+
+
+def empacotado() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def pasta_dados() -> Path:
+    """Dados do usuário: ao lado do código (desenvolvimento) ou em %APPDATA%\\TeleCloud (programa instalado)."""
+    if os.environ.get("TELECLOUD_DADOS"):
+        return Path(os.environ["TELECLOUD_DADOS"])
+    if empacotado():
+        return Path(os.environ.get("APPDATA", Path.home())) / NOME
+    return Path(__file__).resolve().parent.parent / "dados"
+
+
+def pasta_instalacao() -> Path:
+    return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Programs" / NOME
+
+
+def pasta_menu_iniciar() -> Path:
+    return Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / NOME
+
+
+def aviso(texto: str, titulo=NOME, erro=False):
+    ctypes.windll.user32.MessageBoxW(0, texto, titulo, MB_OK | (MB_ICONERRO if erro else MB_ICONINFO))
+
+
+def perguntar(texto: str, titulo=NOME) -> bool:
+    return ctypes.windll.user32.MessageBoxW(0, texto, titulo, MB_YESNO | MB_ICONPERGUNTA) == IDYES
+
+
+# ---------- instância única ----------
+_mutex = None
+
+
+def ja_em_execucao() -> bool:
+    """True se outro TeleCloud já está rodando (mantém um mutex nomeado enquanto este processo viver)."""
+    global _mutex
+    k = ctypes.windll.kernel32
+    k.CreateMutexW.restype = ctypes.c_void_p
+    _mutex = k.CreateMutexW(None, False, "Local\\TeleCloud-instancia-unica")
+    return k.GetLastError() == 183  # ERROR_ALREADY_EXISTS
+
+
+# ---------- console (só para o login, que é feito por texto: funciona bem com leitor de tela) ----------
+def garantir_console():
+    if sys.stdin is not None and sys.stdin.isatty():
+        return
+    ctypes.windll.kernel32.AllocConsole()
+    sys.stdin = open("CONIN$", "r", encoding="utf-8")
+    sys.stdout = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+    sys.stderr = sys.stdout
+    ctypes.windll.kernel32.SetConsoleTitleW("TeleCloud - entrar")
+
+
+def soltar_console():
+    try:
+        ctypes.windll.kernel32.FreeConsole()
+    except Exception:
+        pass
+
+
+# ---------- iniciar com o Windows ----------
+def comando_de_inicio() -> str:
+    if empacotado():
+        return f'"{sys.executable}"'
+    py = Path(sys.executable)
+    pyw = py.with_name("pythonw.exe")
+    raiz = Path(__file__).resolve().parent.parent
+    return f'"{pyw if pyw.exists() else py}" "{raiz / "montar.py"}"'
+
+
+def inicio_ativo() -> bool:
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, CHAVE_INICIO) as k:
+            winreg.QueryValueEx(k, NOME)
+            return True
+    except OSError:
+        return False
+
+
+def definir_inicio(ativo: bool):
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, CHAVE_INICIO, 0, winreg.KEY_SET_VALUE) as k:
+        if ativo:
+            winreg.SetValueEx(k, NOME, 0, winreg.REG_SZ, comando_de_inicio())
+        else:
+            try:
+                winreg.DeleteValue(k, NOME)
+            except OSError:
+                pass
+
+
+# ---------- instalar / desinstalar (o próprio .exe faz isso; não precisa de instalador à parte) ----------
+def _atalho(caminho: Path, alvo: Path):
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{caminho}');"
+          f"$s.TargetPath='{alvo}';$s.WorkingDirectory='{alvo.parent}';$s.Save()")
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True,
+                   creationflags=subprocess.CREATE_NO_WINDOW)
+
+
+def esta_instalado() -> bool:
+    return empacotado() and Path(sys.executable).resolve().parent == pasta_instalacao().resolve()
+
+
+def instalar(iniciar_com_windows: bool) -> Path:
+    import winreg
+    dest = pasta_instalacao()
+    dest.mkdir(parents=True, exist_ok=True)
+    exe = dest / "TeleCloud.exe"
+    shutil.copy2(sys.executable, exe)
+    _atalho(pasta_menu_iniciar() / "TeleCloud.lnk", exe)
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, CHAVE_DESINSTALAR) as k:
+        for nome, valor in {
+            "DisplayName": "TeleCloud", "DisplayVersion": VERSAO, "Publisher": "TeleCloud",
+            "InstallLocation": str(dest), "DisplayIcon": str(exe),
+            "UninstallString": f'"{exe}" --desinstalar',
+        }.items():
+            winreg.SetValueEx(k, nome, 0, winreg.REG_SZ, valor)
+        winreg.SetValueEx(k, "NoModify", 0, winreg.REG_DWORD, 1)
+        winreg.SetValueEx(k, "NoRepair", 0, winreg.REG_DWORD, 1)
+    if iniciar_com_windows:
+        # o comando de início aponta para a cópia instalada, não para o arquivo baixado
+        import winreg as w
+        with w.OpenKey(w.HKEY_CURRENT_USER, CHAVE_INICIO, 0, w.KEY_SET_VALUE) as k:
+            w.SetValueEx(k, NOME, 0, w.REG_SZ, f'"{exe}"')
+    return exe
+
+
+def desinstalar(apagar_dados: bool):
+    """Remove tudo o que a instalação criou fora da pasta de dados; a pasta do programa sai logo após o fim."""
+    import winreg
+    definir_inicio(False)
+    try:
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, CHAVE_DESINSTALAR)
+    except OSError:
+        pass
+    shutil.rmtree(pasta_menu_iniciar(), ignore_errors=True)
+    if apagar_dados:
+        shutil.rmtree(pasta_dados(), ignore_errors=True)
+    # o .exe em uso não se apaga a si mesmo: um cmd espera este processo terminar e remove a pasta
+    dest = pasta_instalacao()
+    subprocess.Popen(
+        ["cmd", "/c", f'ping -n 4 127.0.0.1 >nul & rmdir /s /q "{dest}"'],
+        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS, close_fds=True)

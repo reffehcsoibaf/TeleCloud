@@ -16,12 +16,26 @@ class Armazenamento(ABC):
     def garantir_pasta(self, caminho: str) -> None:
         """Cria o tópico/lugar correspondente a uma pasta de primeiro nível (opcional)."""
 
+    def salvar_indice(self, copia: bytes) -> None:
+        """Guarda a cópia do índice (substituindo a anterior), para recuperar em outro computador."""
+
+    def carregar_indice(self) -> bytes | None:
+        """Devolve a última cópia guardada do índice, ou None se não houver."""
+        return None
+
 
 class ArmazenamentoMemoria(Armazenamento):
     def __init__(self):
         self.blocos: dict[str, bytes] = {}
         self.legendas: dict[str, str] = {}
         self._n = 0
+        self.copia_indice: bytes | None = None
+
+    def salvar_indice(self, copia):
+        self.copia_indice = bytes(copia)
+
+    def carregar_indice(self):
+        return self.copia_indice
 
     def enviar(self, pasta, nome, dados, legenda=""):
         self._n += 1

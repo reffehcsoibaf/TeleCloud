@@ -6,7 +6,9 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from .armazenamento import Armazenamento
 from .indice import RAIZ, Indice, No, Parte
 
-TAMANHO_PARTE = 1900 * 1024 * 1024  # abaixo do limite de 2 GB do Telegram
+# Partes menores abrem vídeos e documentos grandes mais rápido (só se baixa a parte lida).
+# O limite do Telegram é 2 GB; arquivos já guardados com partes maiores continuam legíveis.
+TAMANHO_PARTE = 64 * 1024 * 1024
 
 
 class ErroNuvem(Exception):
@@ -118,13 +120,16 @@ class Nuvem:
             raise ErroNuvem("não existe")
         if no.pasta and self.indice.listar(no.id):
             raise ErroNuvem("pasta não está vazia")
-        self.arm.apagar(self.indice.refs_da_subarvore(no.id))
+        refs = self.indice.refs_da_subarvore(no.id)
+        self.indice.marcar_apagar(refs)
+        self.arm.apagar(refs)
+        self.indice.apagados(refs)
         self.indice.remover(no.id)
 
     def baixar_parte(self, parte: Parte) -> bytes:
         return self._decifrar(self.arm.baixar(parte.ref))
 
-    def enviar_no(self, no_id: int, local: str):
+    def enviar_no(self, no_id: int, local: str, progresso=None):
         """Envia o conteúdo de um arquivo local como o conteúdo do nó (substitui o anterior)."""
         no = self.indice.obter(no_id)
         if not no or no.pasta:
@@ -134,20 +139,33 @@ class Nuvem:
         tamanho = os.path.getsize(local)
         legenda = " ".join(f"#{t}" for t in no.tags.split())
         partes = []
-        if tamanho:
-            with open(local, "rb") as f:
-                i = 0
-                while True:
-                    bloco = f.read(self.tamanho_parte)
-                    if not bloco:
-                        break
-                    ref = self.arm.enviar(
-                        self._topico(caminho), f"{no.nome}.{i:03d}", self._cifrar(bloco), legenda)
-                    partes.append(Parte(i, ref, len(bloco)))
-                    i += 1
+        try:
+            if tamanho:
+                with open(local, "rb") as f:
+                    i = 0
+                    while True:
+                        bloco = f.read(self.tamanho_parte)
+                        if not bloco:
+                            break
+                        ref = self.arm.enviar(
+                            self._topico(caminho), f"{no.nome}.{i:03d}", self._cifrar(bloco), legenda)
+                        partes.append(Parte(i, ref, len(bloco)))
+                        i += 1
+                        if progresso:
+                            progresso(sum(p.tamanho for p in partes), tamanho)
+        except BaseException:
+            if partes:  # não deixa partes soltas no armazenamento; a próxima tentativa recomeça
+                try:
+                    self.arm.apagar([p.ref for p in partes])
+                except Exception:
+                    pass
+            raise
+        if antigas:
+            self.indice.marcar_apagar(antigas)
         self.indice.definir_partes(no_id, partes, tamanho)
         if antigas:
             self.arm.apagar(antigas)
+            self.indice.apagados(antigas)
 
     def buscar_tag(self, tag: str) -> list[No]:
         return self.indice.buscar_tag(tag.lstrip("#"))

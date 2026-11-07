@@ -31,6 +31,7 @@ class Indice:
         self._trava = threading.RLock()
         self.bd = sqlite3.connect(caminho, check_same_thread=False)
         self.bd.execute("PRAGMA foreign_keys=ON")
+        self.mudancas = 0  # sobe a cada alteração; quem salva cópias compara com o último valor salvo
         self.bd.executescript(
             """
             CREATE TABLE IF NOT EXISTS nos(
@@ -50,6 +51,7 @@ class Indice:
                 tamanho INTEGER NOT NULL,
                 PRIMARY KEY(no, seq)
             );
+            CREATE TABLE IF NOT EXISTS apagar_pendentes(ref TEXT PRIMARY KEY);
             """
         )
         self.bd.execute(
@@ -179,6 +181,30 @@ class Indice:
             )
         ]
 
+    # --- exclusões remotas ainda por fazer (sobrevivem a um fechamento do programa) ---
+    def marcar_apagar(self, refs: list[str]):
+        self.bd.executemany("INSERT OR IGNORE INTO apagar_pendentes(ref) VALUES(?)", [(r,) for r in refs])
+        self.bd.commit()
+
+    def apagados(self, refs: list[str]):
+        self.bd.executemany("DELETE FROM apagar_pendentes WHERE ref=?", [(r,) for r in refs])
+        self.bd.commit()
+
+    def apagar_pendentes(self) -> list[str]:
+        return [l[0] for l in self.bd.execute("SELECT ref FROM apagar_pendentes")]
+
+    # --- cópia do índice (para guardar no armazenamento remoto) ---
+    def exportar(self) -> bytes:
+        import zlib
+        return zlib.compress(self.bd.serialize(), 6)
+
+    @staticmethod
+    def gravar_copia(copia: bytes, caminho: str):
+        """Escreve em `caminho` o índice contido em `copia` (resultado de exportar)."""
+        import zlib
+        with open(caminho, "wb") as f:
+            f.write(zlib.decompress(copia))
+
     def fechar(self):
         self.bd.close()
 
@@ -194,8 +220,25 @@ def _travar(f):
     return g
 
 
+def _muta(f):
+    import functools
+
+    @functools.wraps(f)
+    def g(self, *a, **k):
+        r = f(self, *a, **k)
+        self.mudancas += 1
+        return r
+
+    return g
+
+
+for _n in ("criar", "definir_partes", "renomear", "definir_tags", "remover", "definir_tamanho",
+           "marcar_apagar", "apagados"):
+    setattr(Indice, _n, _muta(getattr(Indice, _n)))
+
 for _n in ("resolver", "obter", "listar", "criar", "definir_partes", "partes", "renomear",
            "definir_tags", "remover", "refs_da_subarvore", "buscar_tag", "caminho_de",
-           "definir_tamanho", "pendentes_de_envio"):
+           "definir_tamanho", "pendentes_de_envio", "marcar_apagar", "apagados",
+           "apagar_pendentes", "exportar"):
     setattr(Indice, _n, _travar(getattr(Indice, _n)))
 
