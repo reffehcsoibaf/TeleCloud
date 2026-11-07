@@ -3,10 +3,12 @@
 `Fluxo` guarda a lógica (sem tela, para poder testar); `abrir_janela` é a tela em tkinter.
 """
 import json
+import logging
 from pathlib import Path
 
 from .credenciais import ErroCredenciais, MyTelegram
 
+log = logging.getLogger("telecloud")
 PRONTO = "pronto"
 
 
@@ -177,9 +179,11 @@ def abrir_janela(dados: Path) -> bool:
                 if prox == PRONTO:
                     fluxo.finalizar()
         except ErroCredenciais as e:
+            log.warning("login, passo %s: %s", passo, e)
             erro = str(e)
             continue
-        except Exception as e:  # erro inesperado: mostra e deixa tentar de novo
+        except Exception as e:  # erro inesperado
+            log.exception("login, passo %s", passo): mostra e deixa tentar de novo
             erro = f"{type(e).__name__}: {e}"
             continue
         erro = ""
