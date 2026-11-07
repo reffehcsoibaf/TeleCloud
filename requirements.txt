@@ -1,3 +1,6 @@
-﻿telethon
+telethon
 cryptography
+pystray
+pillow
+pyinstaller
 pytest

@@ -18,13 +18,15 @@ Unidade virtual no Windows (WinFsp) cujo conteúdo fica no Telegram.
 - Renomear e mover mexem só no índice, sem reenviar.
 - O índice é salvo no próprio Telegram (arquivo fixado) para recuperar num PC novo.
 
-## Próximos passos
-1. `TelegramArmazenamento` (login, tópicos, envio e download em partes com retomada).
-2. Camada WinFsp: `getattr`, `readdir`, `read`, `write`, `create`, `rename`, `unlink`. Escrita vai para cache local e o envio acontece ao fechar o arquivo.
-3. Cache em disco com limite de tamanho e fila de envio em segundo plano.
-4. Bandeja, janela de transferências e login, acessíveis por teclado e leitor de tela.
-5. Salvar e restaurar o índice pelo Telegram.
-6. Instalador e empacotamento.
+## Camadas adicionais
+- `unidade.py`: callbacks do WinFsp, cache local, fila de envio em segundo plano (com espera crescente nas falhas), exclusões remotas persistidas, limpeza do cache por último uso e guarda do índice após silêncio.
+- `sistema.py`: instância única, iniciar com o Windows, instalar/desinstalar pelo próprio .exe, console para o login.
+- `bandeja.py`: ícone e menu nativo; `app.py`: fluxo principal; `construir.py`: gera o .exe.
+
+## Pendências
+- Chave de cifra gerenciada pelo usuário (hoje opcional e fora da interface).
+- Mover entre tópicos de verdade (hoje só o índice muda).
+- Pré-leitura da próxima parte para streaming mais fluido.
 
 ## Riscos
 - Limites de taxa e banimento por volume: controlar a velocidade de envio.

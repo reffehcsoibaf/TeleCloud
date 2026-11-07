@@ -158,5 +158,5 @@ def desinstalar(apagar_dados: bool):
     # o .exe em uso não se apaga a si mesmo: um cmd espera este processo terminar e remove a pasta
     dest = pasta_instalacao()
     subprocess.Popen(
-        ["cmd", "/c", f'ping -n 4 127.0.0.1 >nul & rmdir /s /q "{dest}"'],
-        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS, close_fds=True)
+        f'cmd /c ping -n 4 127.0.0.1 >nul & rmdir /s /q "{dest}"',
+        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP, close_fds=True)
