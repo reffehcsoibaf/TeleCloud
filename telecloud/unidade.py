@@ -349,8 +349,11 @@ class Unidade:
     @seguro
     def GetVolumeInfo(self, fs, vi):
         v = vi[0]
-        v.TotalSize = 1 << 40
-        v.FreeSize = 1 << 40
+        # O Telegram não impõe um limite à conta; mostra-se um espaço de 1 TiB, que cresce se for passado.
+        usado = self.ix.bytes_usados()
+        total = max(1 << 40, ((usado >> 40) + 1) << 40)
+        v.TotalSize = total
+        v.FreeSize = total - usado
         v.VolumeLabel = self.rotulo
         v.VolumeLabelLength = len(self.rotulo) * 2
         return w.STATUS_SUCCESS

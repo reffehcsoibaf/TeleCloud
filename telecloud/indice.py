@@ -125,6 +125,10 @@ class Indice:
         )
         self.bd.commit()
 
+    def bytes_usados(self) -> int:
+        """Soma do tamanho de todos os arquivos (pastas não contam)."""
+        return self.bd.execute("SELECT COALESCE(SUM(tamanho), 0) FROM nos WHERE pasta=0").fetchone()[0]
+
     def definir_tags(self, no: int, tags: list[str]):
         self.bd.execute("UPDATE nos SET tags=? WHERE id=?", (" ".join(tags), no))
         self.bd.commit()
@@ -239,6 +243,6 @@ for _n in ("criar", "definir_partes", "renomear", "definir_tags", "remover", "de
 for _n in ("resolver", "obter", "listar", "criar", "definir_partes", "partes", "renomear",
            "definir_tags", "remover", "refs_da_subarvore", "buscar_tag", "caminho_de",
            "definir_tamanho", "pendentes_de_envio", "marcar_apagar", "apagados",
-           "apagar_pendentes", "exportar"):
+           "apagar_pendentes", "exportar", "bytes_usados"):
     setattr(Indice, _n, _travar(getattr(Indice, _n)))
 
