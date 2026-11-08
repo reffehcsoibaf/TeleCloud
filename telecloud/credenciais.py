@@ -49,10 +49,11 @@ class MyTelegram:
         req = urllib.request.Request(SITE + caminho, data=corpo, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                           "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-            "X-Requested-With": "XMLHttpRequest",
-            "Origin": SITE,
-            "Referer": SITE + "/auth",
+            "Referer": SITE + ("/apps" if caminho.startswith("/apps") else "/auth"),
         })
+        if dados is not None:  # só os pedidos do formulário (AJAX); abrir a página não leva esses cabeçalhos
+            req.add_header("X-Requested-With", "XMLHttpRequest")
+            req.add_header("Origin", SITE)
         if self._biscoitos:
             req.add_header("Cookie", "; ".join(f"{k}={v}" for k, v in self._biscoitos.items()))
         try:
@@ -100,18 +101,19 @@ class MyTelegram:
                 raise ErroCredenciais("Muitas tentativas. Espere um pouco e comece de novo.")
             raise ErroCredenciais("Código incorreto.")
 
-    def _ler_apps(self, tentativas=5, espera=3.0):
-        """/apps às vezes responde 401 logo após o login (sessão ainda não valendo); tenta de novo."""
+    def _insistindo(self, caminho, dados=None, tentativas=8, espera=5.0):
+        """Logo após o login o site às vezes responde 401 por um tempo (a sessão ainda não vale em todos os
+        servidores dele); repete o pedido, que não tem efeito colateral enquanto estiver recusado."""
         for i in range(tentativas):
             try:
-                return self._requisitar("/apps")
+                return self._requisitar(caminho, dados)
             except ErroCredenciais as e:
                 if "(401)" not in str(e) or i == tentativas - 1:
                     raise
                 time.sleep(espera)
 
     def obter_ou_criar(self):
-        html = self._ler_apps()
+        html = self._insistindo("/apps")
         chaves = extrair_chaves(html)
         if chaves:
             return chaves
@@ -119,12 +121,12 @@ class MyTelegram:
         if not token:
             raise ErroCredenciais("Não encontrei como cadastrar o aplicativo no site. "
                                   "Crie as chaves à mão em my.telegram.org.")
-        resposta = self._requisitar("/apps/create", {
+        resposta = self._insistindo("/apps/create", {
             "hash": token, "app_title": TITULO, "app_shortname": NOME_CURTO,
             "app_url": "", "app_platform": "desktop", "app_desc": "Unidade de disco com armazenamento no Telegram"})
         if resposta.strip() and "error" in resposta.lower()[:200]:
             raise ErroCredenciais("O Telegram não deixou cadastrar o aplicativo: " + resposta.strip()[:150])
-        chaves = extrair_chaves(self._ler_apps())
+        chaves = extrair_chaves(self._insistindo("/apps"))
         if not chaves:
             raise ErroCredenciais("O aplicativo foi cadastrado, mas não consegui ler as chaves.")
         return chaves
