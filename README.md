@@ -5,7 +5,7 @@ Unidade virtual do Windows (WinFsp) cujo conteúdo fica guardado no Telegram. No
 ## Usar
 1. Instale o driver WinFsp (https://winfsp.dev).
 2. Rode `dist\TeleCloud.exe` (veja "Gerar o programa") ou, a partir do código, `abrir.cmd`.
-3. No primeiro uso aparece um console pedindo as chaves da API (my.telegram.org), o telefone e o código. É só texto, então funciona bem com leitor de tela.
+3. No primeiro uso aparece uma janela: explica como criar as chaves da API (botão que abre my.telegram.org), pede para colá-las e depois pede o telefone e o código. Os campos são nativos, lidos pelo NVDA.
 4. A unidade **T:** aparece. O ícone perto do relógio mostra os envios; Enter nele abre a unidade.
 
 O `.exe` também é o instalador: ao abrir fora da pasta de instalação ele pergunta se deve instalar (copia para `%LOCALAPPDATA%\Programs\TeleCloud`, cria atalho no menu Iniciar, entra em Configurações > Aplicativos e, se você quiser, inicia com o Windows). A desinstalação remove tudo isso e pergunta se apaga também os dados locais. O WinFsp não é removido.
