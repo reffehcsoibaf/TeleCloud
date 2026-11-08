@@ -125,6 +125,9 @@ def principal(argv=None):
                           "(perto do relógio).")
         return 0
 
+    if not sistema.winfsp_instalado() and not _garantir_winfsp():
+        return 1
+
     from .armazenamento import ArmazenamentoMemoria
     from .indice import Indice
     from .nuvem import Nuvem
@@ -205,6 +208,23 @@ def _reabrir(argv):
     import subprocess
     env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
     subprocess.Popen([sys.executable, *(sys.argv[1:] if argv is None else argv)], env=env, close_fds=True)
+
+
+def _garantir_winfsp() -> bool:
+    """O WinFsp é o driver que cria a unidade. Oferece instalar o que vem dentro do .exe."""
+    if sistema.instalador_winfsp() is None:
+        sistema.aviso("O WinFsp não está instalado. Instale-o em " + LINK_WINFSP + " e abra o TeleCloud de novo.",
+                      erro=True)
+        return False
+    if not sistema.perguntar(
+            "O TeleCloud precisa do WinFsp, o driver que cria a unidade T:. Instalar agora?\n\n"
+            "O Windows vai pedir permissão de administrador."):
+        return False
+    if not sistema.instalar_winfsp():
+        sistema.aviso("A instalação do WinFsp não terminou. Você pode instalá-lo à mão em " + LINK_WINFSP,
+                      erro=True)
+        return False
+    return True
 
 
 def _falha(texto: str, args):

@@ -160,3 +160,48 @@ def desinstalar(apagar_dados: bool):
     subprocess.Popen(
         f'cmd /c ping -n 4 127.0.0.1 >nul & rmdir /s /q "{dest}"',
         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP, close_fds=True)
+
+
+# ---------- WinFsp (driver da unidade) ----------
+def dll_winfsp() -> Path:
+    base = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    return Path(base) / "WinFsp" / "bin" / "winfsp-x64.dll"
+
+
+def winfsp_instalado() -> bool:
+    return dll_winfsp().exists()
+
+
+def instalador_winfsp():
+    """Caminho do .msi que vai dentro do .exe (None se não estiver empacotado)."""
+    pasta = Path(getattr(sys, "_MEIPASS", ""))
+    achados = sorted(pasta.glob("winfsp-*.msi")) if getattr(sys, "frozen", False) else []
+    return achados[-1] if achados else None
+
+
+def instalar_winfsp() -> bool:
+    """Roda o instalador embutido, pedindo permissão de administrador. Devolve True se o driver ficou instalado."""
+    msi = instalador_winfsp()
+    if msi is None:
+        return False
+
+    class INFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_ulong), ("fMask", ctypes.c_ulong), ("hwnd", ctypes.c_void_p),
+                    ("lpVerb", ctypes.c_wchar_p), ("lpFile", ctypes.c_wchar_p),
+                    ("lpParameters", ctypes.c_wchar_p), ("lpDirectory", ctypes.c_wchar_p),
+                    ("nShow", ctypes.c_int), ("hInstApp", ctypes.c_void_p), ("lpIDList", ctypes.c_void_p),
+                    ("lpClass", ctypes.c_wchar_p), ("hkeyClass", ctypes.c_void_p), ("dwHotKey", ctypes.c_ulong),
+                    ("hIcon", ctypes.c_void_p), ("hProcess", ctypes.c_void_p)]
+
+    info = INFO()
+    info.cbSize = ctypes.sizeof(INFO)
+    info.fMask = 0x40                      # SEE_MASK_NOCLOSEPROCESS: para esperar o fim
+    info.lpVerb = "runas"                  # pede a permissão de administrador (UAC)
+    info.lpFile = "msiexec.exe"
+    info.lpParameters = f'/i "{msi}" /passive /norestart'
+    info.nShow = 1
+    if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(info)):
+        return False                       # o usuário recusou a permissão
+    ctypes.windll.kernel32.WaitForSingleObject(info.hProcess, 0xFFFFFFFF)
+    ctypes.windll.kernel32.CloseHandle(info.hProcess)
+    return winfsp_instalado()
