@@ -72,11 +72,16 @@ def entrar_console(dados: Path):
     sistema.soltar_console()
 
 
+_login_feito = False   # True quando este processo mostrou a janela de login
+
+
 def _conectar(dados: Path):
+    global _login_feito
     from .telegram import TelegramArmazenamento
     if not (dados / "config.json").exists():
         if not entrar(dados):
             raise RuntimeError("Login cancelado.")
+        _login_feito = True
     arm = TelegramArmazenamento(dados)
     try:
         arm.conectar()
@@ -84,6 +89,7 @@ def _conectar(dados: Path):
         arm.fechar()
         if not entrar(dados):
             raise RuntimeError("Login cancelado.")
+        _login_feito = True
         arm = TelegramArmazenamento(dados)
         arm.conectar()
     return arm
@@ -106,6 +112,8 @@ def principal(argv=None):
             return 0
 
     dados.mkdir(parents=True, exist_ok=True)
+    import faulthandler
+    faulthandler.enable(open(dados / "falha.log", "a"))   # se o processo morrer sem aviso, o motivo fica aqui
     logging.basicConfig(filename=str(dados / "telecloud.log"), level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s", encoding="utf-8")
     if args.entrar:
@@ -126,6 +134,11 @@ def principal(argv=None):
             arm, indice = ArmazenamentoMemoria(), Indice()
         else:
             arm = _conectar(dados)
+            if _login_feito and sistema.empacotado():
+                # a janela de login (wx) e a bandeja não convivem bem no mesmo processo: recomeça limpo
+                arm.fechar()
+                _reabrir(argv)
+                return 0
             caminho_indice = dados / "indice.db"
             if not caminho_indice.exists():
                 copia = arm.carregar_indice()
@@ -186,6 +199,12 @@ def principal(argv=None):
     bandeja.executar(ao_pronto=lambda: bandeja.avisar(
         f"Unidade {args.unidade} pronta. Use o ícone perto do relógio para ver os envios."))
     return 0
+
+
+def _reabrir(argv):
+    import subprocess
+    env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
+    subprocess.Popen([sys.executable, *(sys.argv[1:] if argv is None else argv)], env=env, close_fds=True)
 
 
 def _falha(texto: str, args):
