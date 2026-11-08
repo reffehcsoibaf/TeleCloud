@@ -8,6 +8,7 @@ Fluxo (o mesmo que o site faz no navegador):
 import json
 import logging
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -99,8 +100,18 @@ class MyTelegram:
                 raise ErroCredenciais("Muitas tentativas. Espere um pouco e comece de novo.")
             raise ErroCredenciais("Código incorreto.")
 
+    def _ler_apps(self, tentativas=5, espera=3.0):
+        """/apps às vezes responde 401 logo após o login (sessão ainda não valendo); tenta de novo."""
+        for i in range(tentativas):
+            try:
+                return self._requisitar("/apps")
+            except ErroCredenciais as e:
+                if "(401)" not in str(e) or i == tentativas - 1:
+                    raise
+                time.sleep(espera)
+
     def obter_ou_criar(self):
-        html = self._requisitar("/apps")  # 401 aqui = sessão do site não foi aceita
+        html = self._ler_apps()
         chaves = extrair_chaves(html)
         if chaves:
             return chaves
@@ -113,7 +124,7 @@ class MyTelegram:
             "app_url": "", "app_platform": "desktop", "app_desc": "Unidade de disco com armazenamento no Telegram"})
         if resposta.strip() and "error" in resposta.lower()[:200]:
             raise ErroCredenciais("O Telegram não deixou cadastrar o aplicativo: " + resposta.strip()[:150])
-        chaves = extrair_chaves(self._requisitar("/apps"))
+        chaves = extrair_chaves(self._ler_apps())
         if not chaves:
             raise ErroCredenciais("O aplicativo foi cadastrado, mas não consegui ler as chaves.")
         return chaves
