@@ -11,12 +11,12 @@ Unidade virtual do Windows (WinFsp) cujo conteúdo fica guardado no Telegram. No
 O `.exe` também é o instalador: ao abrir fora da pasta de instalação ele pergunta se deve instalar (copia para `%LOCALAPPDATA%\Programs\TeleCloud`, cria atalho no menu Iniciar, entra em Configurações > Aplicativos e, se você quiser, inicia com o Windows). A desinstalação remove tudo isso e pergunta se apaga também os dados locais. O WinFsp não é removido.
 
 ## Menu do ícone da bandeja
-Tudo é menu nativo (teclado e leitor de tela), sem janelas próprias: estado dos envios, fila de envios, espaço usado no disco, quando o índice foi guardado, guardar o índice agora, iniciar com o Windows, abrir a pasta de dados/registro e Sair (espera os envios pendentes terminarem).
+Menu nativo (teclado e leitor de tela): estado dos envios, fila de envios, espaço usado no disco, quando o índice foi guardado, guardar o índice agora, Configurações (janela com o limite do cache e o início com o Windows), iniciar com o Windows, abrir a pasta de dados/registro e Sair (espera os envios pendentes terminarem).
 
 ## Comportamento
 - Gravar é rápido: o arquivo vai para o cache em `dados\cache` e sobe ao Telegram em segundo plano. Se o programa fechar no meio, retoma no próximo início.
 - Arquivos são divididos em partes de 64 MB; só a parte lida é baixada.
-- O cache em disco tem limite (`cache_max_mb` em `config.json`, padrão 5120). Passando disso, saem primeiro os arquivos usados há mais tempo que já estão no Telegram.
+- O cache em disco tem limite (padrão 5 GB; mude em Configurações no menu da bandeja, ou `cache_max_mb` em `config.json`). Passando disso, saem primeiro os arquivos usados há mais tempo que já estão no Telegram.
 - O índice (árvore de pastas, partes, tags) é guardado no grupo do Telegram depois de alguns segundos sem alterações e ao sair. Num computador novo, basta entrar com a mesma conta: o grupo e o índice são recuperados sozinhos.
 - Exclusões pendentes no Telegram ficam registradas no índice e são concluídas mesmo depois de reiniciar.
 - Falhas de rede: nova tentativa com espera crescente (até 5 min); o ícone avisa.

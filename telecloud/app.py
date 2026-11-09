@@ -27,6 +27,7 @@ def _argumentos(argv):
     ap.add_argument("--desinstalar", action="store_true", help="remove o programa instalado")
     ap.add_argument("--iniciar-com-windows", choices=["sim", "nao"], help="liga ou desliga o início automático")
     ap.add_argument("--sem-instalar", action="store_true", help="não oferecer a instalação")
+    ap.add_argument("--configuracoes", action="store_true", help="abre a janela de configurações")
     return ap.parse_args(argv)
 
 
@@ -102,6 +103,10 @@ def principal(argv=None):
         sys.stdout = sys.stderr = open(os.devnull, "w")
     dados = Path(args.dados) if args.dados else sistema.pasta_dados()
 
+    if args.configuracoes:
+        from .configuracoes import abrir_janela
+        abrir_janela(dados)
+        return 0
     if args.desinstalar:
         return _desinstalar()
     if args.iniciar_com_windows:
@@ -154,10 +159,8 @@ def principal(argv=None):
         _falha(f"Não foi possível conectar ao Telegram:\n{e}", args)
         return 1
 
-    cfg = {}
-    if (dados / "config.json").exists():
-        cfg = json.loads((dados / "config.json").read_text(encoding="utf-8-sig"))
-    cache_max = int(float(cfg.get("cache_max_mb", 5120)) * 1024 * 1024)
+    from .configuracoes import cache_max_bytes
+    cache_max = cache_max_bytes(dados)
 
     try:
         from .unidade import Unidade
@@ -198,7 +201,10 @@ def principal(argv=None):
         encerrar()
         bandeja.parar()
 
-    bandeja = Bandeja(un, args.unidade, dados, sair)
+    def reler_configuracoes():
+        un.cache_max = cache_max_bytes(dados)   # vale já, sem reiniciar
+
+    bandeja = Bandeja(un, args.unidade, dados, sair, ao_configurar=reler_configuracoes)
     bandeja.executar(ao_pronto=lambda: bandeja.avisar(
         f"Unidade {args.unidade} pronta. Use o ícone perto do relógio para ver os envios."))
     return 0

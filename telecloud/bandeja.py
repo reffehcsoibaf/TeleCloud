@@ -30,8 +30,10 @@ ICONES = {"ok": "#229ED9", "ocupado": "#E08A00", "erro": "#C62828"}
 
 
 class Bandeja:
-    def __init__(self, un, unidade_letra: str, pasta_dados, ao_sair):
+    def __init__(self, un, unidade_letra: str, pasta_dados, ao_sair, ao_configurar=None):
         self.un = un
+        self.ao_configurar = ao_configurar   # chamada quando a janela de configurações fecha
+        self._janela_config = None
         self.letra = unidade_letra
         self.pasta_dados = pasta_dados
         self.ao_sair = ao_sair  # chamada em outra thread; deve encerrar tudo e depois chamar parar()
@@ -99,6 +101,7 @@ class Bandeja:
             pystray.MenuItem(indice, None, enabled=False),
             pystray.MenuItem("Guardar o índice no Telegram agora", self._guardar_indice),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Configurações...", self._configuracoes),
             pystray.MenuItem("Iniciar com o Windows", self._alternar_inicio,
                              checked=lambda _: sistema.inicio_ativo()),
             pystray.MenuItem("Abrir a pasta de dados e registro", self._abrir_dados),
@@ -117,6 +120,30 @@ class Bandeja:
             ok = self.un.salvar_indice_agora()
             self.avisar("Índice guardado no Telegram." if ok else "Não foi possível guardar o índice agora.")
         threading.Thread(target=f, daemon=True).start()
+
+    def _configuracoes(self, *_):
+        """Abre a janela num processo à parte (wx e bandeja não convivem no mesmo) e relê o config ao fechar."""
+        import subprocess
+        import sys
+        if self._janela_config is not None and self._janela_config.poll() is None:
+            return   # já está aberta
+        if sistema.empacotado():
+            cmd = [sys.executable]
+        else:
+            cmd = [sys.executable, os.path.abspath(sys.argv[0])]
+        cmd += ["--configuracoes", "--dados", str(self.pasta_dados)]
+        env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
+        self._janela_config = proc = subprocess.Popen(cmd, env=env, close_fds=True)
+
+        def esperar():
+            proc.wait()
+            try:
+                if self.ao_configurar:
+                    self.ao_configurar()
+                self.icone.update_menu()
+            except Exception:
+                pass
+        threading.Thread(target=esperar, daemon=True).start()
 
     def _alternar_inicio(self, *_):
         sistema.definir_inicio(not sistema.inicio_ativo())
