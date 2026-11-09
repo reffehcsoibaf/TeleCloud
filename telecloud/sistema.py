@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 NOME = "TeleCloud"
@@ -55,6 +56,57 @@ def ja_em_execucao() -> bool:
     k.CreateMutexW.restype = ctypes.c_void_p
     _mutex = k.CreateMutexW(None, False, "Local\\TeleCloud-instancia-unica")
     return k.GetLastError() == 183  # ERROR_ALREADY_EXISTS
+
+
+def instancia_ativa() -> bool:
+    """True se há um TeleCloud rodando (sem tomar o mutex)."""
+    k = ctypes.windll.kernel32
+    k.OpenMutexW.restype = ctypes.c_void_p
+    h = k.OpenMutexW(0x00100000, False, "Local\\TeleCloud-instancia-unica")   # SYNCHRONIZE
+    if h:
+        k.CloseHandle(ctypes.c_void_p(h))
+        return True
+    return False
+
+
+EVENTO_SAIR = "Local\\TeleCloud-pedido-de-saida"
+
+
+def criar_evento_sair():
+    """Evento que outra cópia do programa aciona para pedir que esta feche (atualização)."""
+    k = ctypes.windll.kernel32
+    k.CreateEventW.restype = ctypes.c_void_p
+    return k.CreateEventW(None, True, False, EVENTO_SAIR)
+
+
+def esperar_pedido_sair(evento) -> None:
+    k = ctypes.windll.kernel32
+    k.WaitForSingleObject(ctypes.c_void_p(evento), 0xFFFFFFFF)
+
+
+def pedir_para_sair() -> bool:
+    """Pede à cópia em execução que feche (esperando os envios). False se ela não entende o pedido."""
+    k = ctypes.windll.kernel32
+    k.OpenEventW.restype = ctypes.c_void_p
+    h = k.OpenEventW(0x0002, False, EVENTO_SAIR)    # EVENT_MODIFY_STATE
+    if not h:
+        return False
+    k.SetEvent(ctypes.c_void_p(h))
+    k.CloseHandle(ctypes.c_void_p(h))
+    return True
+
+
+def esperar_encerrar(limite: float) -> bool:
+    fim = time.time() + limite
+    while instancia_ativa():
+        if time.time() > fim:
+            return False
+        time.sleep(0.5)
+    return True
+
+
+def instalado_em_disco() -> bool:
+    return (pasta_instalacao() / "TeleCloud.exe").exists()
 
 
 # ---------- console (só para o login, que é feito por texto: funciona bem com leitor de tela) ----------
@@ -125,7 +177,14 @@ def instalar(iniciar_com_windows: bool) -> Path:
     dest = pasta_instalacao()
     dest.mkdir(parents=True, exist_ok=True)
     exe = dest / "TeleCloud.exe"
-    shutil.copy2(sys.executable, exe)
+    for tentativa in range(20):    # o Windows demora um instante para soltar o .exe de uma cópia que acabou de fechar
+        try:
+            shutil.copy2(sys.executable, exe)
+            break
+        except PermissionError:
+            if tentativa == 19:
+                raise
+            time.sleep(0.5)
     _atalho(pasta_menu_iniciar() / "TeleCloud.lnk", exe)
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, CHAVE_DESINSTALAR) as k:
         for nome, valor in {

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -205,6 +206,13 @@ def principal(argv=None):
         un.cache_max = cache_max_bytes(dados)   # vale já, sem reiniciar
 
     bandeja = Bandeja(un, args.unidade, dados, sair, ao_configurar=reler_configuracoes)
+
+    evento_sair = sistema.criar_evento_sair()   # uma atualização pede por aqui que este programa feche
+
+    def esperar_pedido():
+        sistema.esperar_pedido_sair(evento_sair)
+        bandeja._sair()
+    threading.Thread(target=esperar_pedido, daemon=True).start()
     bandeja.executar(ao_pronto=lambda: bandeja.avisar(
         f"Unidade {args.unidade} pronta. Use o ícone perto do relógio para ver os envios."))
     return 0
@@ -241,8 +249,35 @@ def _falha(texto: str, args):
         sistema.aviso(texto, erro=True)
 
 
+def _atualizar() -> bool:
+    """Já existe uma cópia instalada: troca por esta, sem perguntas. Fecha a que estiver aberta (esperando os
+    envios pendentes terminarem) e abre a nova. Devolve True se o assunto acabou aqui."""
+    import subprocess
+    import threading
+    if sistema.instancia_ativa():
+        if not sistema.pedir_para_sair():
+            sistema.aviso("O TeleCloud instalado está aberto e é de uma versão que não fecha sozinha. "
+                          "Use o ícone dele na bandeja, escolha Sair e abra este arquivo de novo.", erro=True)
+            return True
+        if not sistema.esperar_encerrar(15):
+            threading.Thread(target=sistema.aviso, daemon=True, args=(
+                "O TeleCloud está terminando os envios pendentes. A atualização continua sozinha quando "
+                "eles acabarem; este aviso pode ser fechado.",)).start()
+            if not sistema.esperar_encerrar(3600):
+                return True
+    try:
+        exe = sistema.instalar(sistema.inicio_ativo())
+    except Exception as e:
+        sistema.aviso(f"Não consegui atualizar o TeleCloud:\n{e}", erro=True)
+        return True
+    subprocess.Popen([str(exe)], close_fds=True)
+    return True
+
+
 def _oferecer_instalacao() -> bool:
     """Este .exe também é o instalador. Devolve True se instalou (e já abriu a cópia instalada)."""
+    if sistema.instalado_em_disco():
+        return _atualizar()
     if not sistema.perguntar(
             "Instalar o TeleCloud neste computador?\n\n"
             "Sim: copia o programa para o seu perfil, cria um atalho no menu Iniciar e aparece em "
