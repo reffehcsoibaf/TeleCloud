@@ -32,3 +32,8 @@ Menu nativo (teclado e leitor de tela): estado dos envios, fila de envios, espa�
 - Se o índice ainda não foi guardado e o computador for perdido, as partes ficam no grupo mas sem a árvore.
 - O índice e os arquivos não são cifrados por padrão (a cifra AES-256-GCM existe em `nuvem.py`, falta a gestão de senha).
 - O uso como armazenamento em massa fica numa zona cinzenta dos termos do Telegram.
+
+## Licença e componentes de terceiros
+O código do TeleCloud é licenciado sob a MIT (arquivo `LICENSE`).
+
+O `.exe` inclui, sem modificações, o instalador do [WinFsp](https://winfsp.dev) (GPLv3 com exceção para software livre; código-fonte em https://github.com/winfsp/winfsp) e usa bibliotecas de código aberto: Telethon, wxPython, pystray, Pillow, cryptography e PyInstaller, cada uma sob a sua própria licença.
