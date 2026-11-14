@@ -83,3 +83,23 @@ def test_menu_tem_desconectar_so_quando_ha_acao(tmp_path):
         assert any("Desconectar a conta" in t for t in textos(com))
     finally:
         un.parar()
+
+
+def test_bandeja_grava_estado_para_o_painel(tmp_path):
+    import json
+    nuvem = Nuvem(Indice(), ArmazenamentoMemoria())
+    un = Unidade(nuvem, tmp_path / "c")
+    try:
+        b = Bandeja(un, "T:", tmp_path, lambda: None)
+        b._atualizar(forcar=True)
+        e = json.loads((tmp_path / "estado.json").read_text(encoding="utf-8"))
+        assert e["texto"] == "Tudo enviado" and e["unidade"] == "T:" and e["pendentes"] == 0
+        assert b._config_mudou() is False
+        (tmp_path / "config.json").write_text("{}")
+        assert b._config_mudou() is False       # primeira leitura só marca a referência
+        (tmp_path / "config.json").write_text('{"a": 1}')
+        import os
+        os.utime(tmp_path / "config.json", (1, 1))
+        assert b._config_mudou() is True
+    finally:
+        un.parar()

@@ -29,6 +29,7 @@ def _argumentos(argv):
     ap.add_argument("--iniciar-com-windows", choices=["sim", "nao"], help="liga ou desliga o início automático")
     ap.add_argument("--sem-instalar", action="store_true", help="não oferecer a instalação")
     ap.add_argument("--configuracoes", action="store_true", help="abre a janela de configurações")
+    ap.add_argument("--painel", action="store_true", help="abre o painel de controle")
     return ap.parse_args(argv)
 
 
@@ -108,6 +109,10 @@ def principal(argv=None):
         from .configuracoes import abrir_janela
         abrir_janela(dados)
         return 0
+    if args.painel:
+        from .painel import abrir_painel
+        abrir_painel(dados)
+        return 0
     if args.desinstalar:
         return _desinstalar()
     if args.iniciar_com_windows:
@@ -127,8 +132,8 @@ def principal(argv=None):
         return 0
     if sistema.ja_em_execucao():
         if not args.sem_bandeja:
-            sistema.aviso("O TeleCloud já está aberto. Procure o ícone dele na bandeja do sistema "
-                          "(perto do relógio).")
+            from .painel import abrir_painel   # quem abre o TeleCloud já aberto vê o painel de controle
+            abrir_painel(dados)
         return 0
 
     if not sistema.winfsp_instalado() and not _garantir_winfsp():
@@ -178,11 +183,15 @@ def principal(argv=None):
         return 1
 
     def encerrar():
-        _escrever("Aguardando envios pendentes...")
-        un.aguardar_fila(limite=3600)
+        # Não espera a fila toda: o que está pendente fica no índice e no cache e volta à fila ao reabrir.
+        # Espera só o arquivo que está sendo enviado agora (um pouco), para não deixar partes soltas no Telegram.
+        _escrever("Terminando o envio em andamento...")
+        limite = time.time() + 15
+        while un.atual and time.time() < limite:
+            time.sleep(0.2)
         un.salvar_indice_agora()
         fs.desmontar()
-        un.parar()
+        un.parar()   # fecha os arquivos abertos, gravando no disco o que ainda estava em memória
         if not args.memoria:
             arm.fechar()
         _escrever("Encerrado.")
@@ -249,6 +258,14 @@ def principal(argv=None):
         sistema.esperar_pedido_sair(evento_sair)
         bandeja._sair()
     threading.Thread(target=esperar_pedido, daemon=True).start()
+    if not args.memoria:
+        evento_desc = sistema.criar_evento_desconectar()   # o painel de controle pede por aqui
+
+        def esperar_desconectar():
+            while True:
+                sistema.esperar_pedido_sair(evento_desc)
+                desconectar()
+        threading.Thread(target=esperar_desconectar, daemon=True).start()
     bandeja.executar(ao_pronto=lambda: bandeja.avisar(
         f"Unidade {args.unidade} pronta. Use o ícone perto do relógio para ver os envios."))
     if reabrir_depois:
@@ -299,8 +316,8 @@ def _atualizar() -> bool:
             return True
         if not sistema.esperar_encerrar(15):
             threading.Thread(target=sistema.aviso, daemon=True, args=(
-                "O TeleCloud está terminando os envios pendentes. A atualização continua sozinha quando "
-                "eles acabarem; este aviso pode ser fechado.",)).start()
+                "O TeleCloud está terminando o envio em andamento. A atualização continua sozinha em "
+                "seguida; este aviso pode ser fechado.",)).start()
             if not sistema.esperar_encerrar(3600):
                 return True
     try:

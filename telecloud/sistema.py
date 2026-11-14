@@ -10,7 +10,7 @@ from pathlib import Path
 NOME = "TeleCloud"
 CHAVE_INICIO = r"Software\Microsoft\Windows\CurrentVersion\Run"
 CHAVE_DESINSTALAR = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\TeleCloud"
-VERSAO = "2026.11.14.2"
+VERSAO = "2026.11.14.3"
 
 MB_OK, MB_YESNO, MB_ICONINFO, MB_ICONERRO, MB_ICONPERGUNTA = 0x0, 0x4, 0x40, 0x10, 0x20
 IDYES = 6
@@ -84,16 +84,36 @@ def esperar_pedido_sair(evento) -> None:
     k.WaitForSingleObject(ctypes.c_void_p(evento), 0xFFFFFFFF)
 
 
-def pedir_para_sair() -> bool:
-    """Pede à cópia em execução que feche (esperando os envios). False se ela não entende o pedido."""
+EVENTO_DESCONECTAR = "Local\\TeleCloud-pedido-desconectar"
+
+
+def acionar_evento(nome: str) -> bool:
+    """Aciona um evento nomeado da cópia em execução. False se ela não o criou (versão antiga ou fechada)."""
     k = ctypes.windll.kernel32
     k.OpenEventW.restype = ctypes.c_void_p
-    h = k.OpenEventW(0x0002, False, EVENTO_SAIR)    # EVENT_MODIFY_STATE
+    h = k.OpenEventW(0x0002, False, nome)    # EVENT_MODIFY_STATE
     if not h:
         return False
     k.SetEvent(ctypes.c_void_p(h))
     k.CloseHandle(ctypes.c_void_p(h))
     return True
+
+
+def pedir_para_sair() -> bool:
+    """Pede à cópia em execução que feche. False se ela não entende o pedido."""
+    return acionar_evento(EVENTO_SAIR)
+
+
+def criar_evento_desconectar():
+    k = ctypes.windll.kernel32
+    k.CreateEventW.restype = ctypes.c_void_p
+    return k.CreateEventW(None, False, False, EVENTO_DESCONECTAR)   # rearma sozinho a cada pedido
+
+
+def versao_em_numeros(texto: str) -> tuple:
+    """'v2026.11.14.2' -> (2026, 11, 14, 2); '2026.11.9' -> (2026, 11, 9, 0). Para comparar versões."""
+    partes = [int(p) for p in texto.strip().lstrip("vV").split(".") if p.isdigit()]
+    return tuple((partes + [0, 0, 0, 0])[:4])
 
 
 def esperar_encerrar(limite: float) -> bool:
@@ -160,10 +180,22 @@ def definir_inicio(ativo: bool):
 
 
 # ---------- instalar / desinstalar (o próprio .exe faz isso; não precisa de instalador à parte) ----------
-def _atalho(caminho: Path, alvo: Path):
+TECLA_ATALHO = "CTRL+ALT+T"   # tecla de atalho do ícone da Área de Trabalho: abre o painel de qualquer lugar
+
+
+def pasta_area_de_trabalho() -> Path:
+    """A Área de Trabalho do usuário (pode estar dentro do OneDrive)."""
+    r = subprocess.run(["powershell", "-NoProfile", "-Command", "[Environment]::GetFolderPath('Desktop')"],
+                       capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    texto = r.stdout.strip()
+    return Path(texto) if texto else Path.home() / "Desktop"
+
+
+def _atalho(caminho: Path, alvo: Path, tecla: str = ""):
     caminho.parent.mkdir(parents=True, exist_ok=True)
     ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{caminho}');"
-          f"$s.TargetPath='{alvo}';$s.WorkingDirectory='{alvo.parent}';$s.Save()")
+          f"$s.TargetPath='{alvo}';$s.WorkingDirectory='{alvo.parent}';"
+          + (f"$s.Hotkey='{tecla}';" if tecla else "") + "$s.Save()")
     subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True,
                    creationflags=subprocess.CREATE_NO_WINDOW)
 
@@ -186,6 +218,10 @@ def instalar(iniciar_com_windows: bool) -> Path:
                 raise
             time.sleep(0.5)
     _atalho(pasta_menu_iniciar() / "TeleCloud.lnk", exe)
+    try:
+        _atalho(pasta_area_de_trabalho() / "TeleCloud.lnk", exe, TECLA_ATALHO)
+    except Exception:
+        pass   # o ícone da Área de Trabalho é um conforto; a instalação não falha por causa dele
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, CHAVE_DESINSTALAR) as k:
         for nome, valor in {
             "DisplayName": "TeleCloud", "DisplayVersion": VERSAO, "Publisher": "TeleCloud",
@@ -212,6 +248,10 @@ def desinstalar(apagar_dados: bool):
     except OSError:
         pass
     shutil.rmtree(pasta_menu_iniciar(), ignore_errors=True)
+    try:
+        (pasta_area_de_trabalho() / "TeleCloud.lnk").unlink(missing_ok=True)
+    except OSError:
+        pass
     if apagar_dados:
         shutil.rmtree(pasta_dados(), ignore_errors=True)
     # o .exe em uso não se apaga a si mesmo: um cmd espera este processo terminar e remove a pasta

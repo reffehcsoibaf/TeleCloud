@@ -1,9 +1,11 @@
 """Ícone na bandeja do sistema. Tudo é menu nativo do Windows (acessível por teclado e leitor de tela):
 o estado aparece como itens de texto, sem janelas próprias."""
+import json
 import logging
 import os
 import threading
 import time
+from pathlib import Path
 
 import pystray
 from PIL import Image, ImageDraw
@@ -42,13 +44,14 @@ class Bandeja:
         self.saindo = False
         self._fim = False
         self._assinatura = None
+        self._mtime_config = None
         self.icone = pystray.Icon("TeleCloud", _icone(ICONES["ok"]), "TeleCloud", self._menu())
         un.ao_erro = lambda texto: self.avisar(texto)
 
     # ---------- texto do estado ----------
     def _resumo(self) -> tuple[str, str]:
         if self.saindo:
-            return "Encerrando: aguardando os envios terminarem", "ocupado"
+            return "Encerrando o TeleCloud", "ocupado"
         s = self.un.situacao()
         if s["pausa_ate"] > time.time():
             hora = time.strftime("%H:%M", time.localtime(s["pausa_ate"]))
@@ -100,6 +103,7 @@ class Bandeja:
         return pystray.Menu(
             pystray.MenuItem(estado, None, enabled=False),
             pystray.MenuItem(f"Abrir a unidade {self.letra}", self._abrir_unidade, default=True),
+            pystray.MenuItem("Abrir o painel de controle", self._abrir_painel),
             pystray.MenuItem("Fila de envios", pystray.Menu(lambda: self._itens_fila())),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(cache, None, enabled=False),
@@ -119,6 +123,17 @@ class Bandeja:
     def _abrir_unidade(self, *_):
         os.startfile(self.letra + "\\")
 
+    def _comando(self, *extra) -> list:
+        """Comando para abrir uma janela do TeleCloud num processo à parte (wx e bandeja não convivem no mesmo)."""
+        import sys
+        cmd = [sys.executable] if sistema.empacotado() else [sys.executable, os.path.abspath(sys.argv[0])]
+        return cmd + list(extra) + ["--dados", str(self.pasta_dados)]
+
+    def _abrir_painel(self, *_):
+        import subprocess
+        env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
+        subprocess.Popen(self._comando("--painel"), env=env, close_fds=True)
+
     def _abrir_dados(self, *_):
         os.startfile(str(self.pasta_dados))
 
@@ -131,14 +146,9 @@ class Bandeja:
     def _configuracoes(self, *_):
         """Abre a janela num processo à parte (wx e bandeja não convivem no mesmo) e relê o config ao fechar."""
         import subprocess
-        import sys
         if self._janela_config is not None and self._janela_config.poll() is None:
             return   # já está aberta
-        if sistema.empacotado():
-            cmd = [sys.executable]
-        else:
-            cmd = [sys.executable, os.path.abspath(sys.argv[0])]
-        cmd += ["--configuracoes", "--dados", str(self.pasta_dados)]
+        cmd = self._comando("--configuracoes")
         env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
         self._janela_config = proc = subprocess.Popen(cmd, env=env, close_fds=True)
 
@@ -185,11 +195,33 @@ class Bandeja:
             self.icone.icon = _icone(ICONES[nivel])
             self.icone.title = ("TeleCloud: " + texto)[:127]
             self.icone.update_menu()
+            self._gravar_estado(texto, nivel, s)
+
+    def _gravar_estado(self, texto, nivel, s):
+        """O painel de controle (outro processo) lê este arquivo para mostrar o estado."""
+        try:
+            (Path(self.pasta_dados) / "estado.json").write_text(json.dumps({
+                "texto": texto, "nivel": nivel, "unidade": self.letra, "versao": sistema.VERSAO,
+                "pendentes": len(s["esperando"]) + (1 if s["enviando"] else 0), "pausa_ate": s["pausa_ate"],
+                "cache": s["cache"], "cache_max": s["cache_max"], "em": time.time()}), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _config_mudou(self) -> bool:
+        """True quando o config.json foi regravado (pela janela de configurações aberta pelo painel)."""
+        try:
+            m = (Path(self.pasta_dados) / "config.json").stat().st_mtime
+        except OSError:
+            return False
+        antes, self._mtime_config = self._mtime_config, m
+        return antes is not None and m != antes
 
     def _vigiar(self):
         while not self._fim:
             try:
                 self._atualizar()
+                if self._config_mudou() and self.ao_configurar:
+                    self.ao_configurar()
             except Exception:
                 logging.getLogger("telecloud").exception("bandeja: falha ao atualizar o estado")
             time.sleep(1)
