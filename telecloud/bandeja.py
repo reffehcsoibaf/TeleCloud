@@ -1,5 +1,6 @@
 """Ícone na bandeja do sistema. Tudo é menu nativo do Windows (acessível por teclado e leitor de tela):
 o estado aparece como itens de texto, sem janelas próprias."""
+import logging
 import os
 import threading
 import time
@@ -165,8 +166,11 @@ class Bandeja:
     # ---------- ciclo ----------
     def _atualizar(self, forcar=False):
         texto, nivel = self._resumo()
-        if forcar or (texto, nivel) != self._assinatura:
-            self._assinatura = (texto, nivel)
+        s = self.un.situacao()
+        # a fila entra na assinatura: o menu é montado de uma vez e só muda quando chamamos update_menu
+        assinatura = (texto, nivel, s["enviando"], tuple(s["esperando"]), s["apagando"])
+        if forcar or assinatura != self._assinatura:
+            self._assinatura = assinatura
             self.icone.icon = _icone(ICONES[nivel])
             self.icone.title = ("TeleCloud: " + texto)[:127]
             self.icone.update_menu()
@@ -176,8 +180,8 @@ class Bandeja:
             try:
                 self._atualizar()
             except Exception:
-                pass
-            time.sleep(2)
+                logging.getLogger("telecloud").exception("bandeja: falha ao atualizar o estado")
+            time.sleep(1)
 
     def executar(self, ao_pronto=None):
         """Bloqueia até parar() ser chamado."""

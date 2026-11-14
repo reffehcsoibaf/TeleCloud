@@ -10,7 +10,7 @@ from pathlib import Path
 NOME = "TeleCloud"
 CHAVE_INICIO = r"Software\Microsoft\Windows\CurrentVersion\Run"
 CHAVE_DESINSTALAR = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\TeleCloud"
-VERSAO = "2026.11.9"
+VERSAO = "2026.11.13"
 
 MB_OK, MB_YESNO, MB_ICONINFO, MB_ICONERRO, MB_ICONPERGUNTA = 0x0, 0x4, 0x40, 0x10, 0x20
 IDYES = 6
