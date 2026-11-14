@@ -446,7 +446,9 @@ class Unidade:
         if a and a.estado:
             with self.trava:
                 a.estado.refs -= 1
-                if a.estado.refs <= 0 and not a.estado.sujo:
+                if a.estado.refs <= 0:
+                    # Também fecha se estiver esperando envio: o envio abre o arquivo por conta própria, e
+                    # deixar aberto o de cada arquivo da fila esgota o limite de arquivos abertos do processo.
                     a.estado.fechar_fh()
 
     @seguro
