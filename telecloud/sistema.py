@@ -10,7 +10,7 @@ from pathlib import Path
 NOME = "TeleCloud"
 CHAVE_INICIO = r"Software\Microsoft\Windows\CurrentVersion\Run"
 CHAVE_DESINSTALAR = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\TeleCloud"
-VERSAO = "2026.11.14.3"
+VERSAO = "2026.11.14.4"
 
 MB_OK, MB_YESNO, MB_ICONINFO, MB_ICONERRO, MB_ICONPERGUNTA = 0x0, 0x4, 0x40, 0x10, 0x20
 IDYES = 6
@@ -180,7 +180,7 @@ def definir_inicio(ativo: bool):
 
 
 # ---------- instalar / desinstalar (o próprio .exe faz isso; não precisa de instalador à parte) ----------
-TECLA_ATALHO = "CTRL+ALT+T"   # tecla de atalho do ícone da Área de Trabalho: abre o painel de qualquer lugar
+TECLA_ATALHO = ""   # sem tecla de atalho global: Ctrl+Alt+T já é do TeleZapp
 
 
 def pasta_area_de_trabalho() -> Path:
@@ -195,7 +195,7 @@ def _atalho(caminho: Path, alvo: Path, tecla: str = ""):
     caminho.parent.mkdir(parents=True, exist_ok=True)
     ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{caminho}');"
           f"$s.TargetPath='{alvo}';$s.WorkingDirectory='{alvo.parent}';"
-          + (f"$s.Hotkey='{tecla}';" if tecla else "") + "$s.Save()")
+          f"$s.Hotkey='{tecla}';$s.Save()")   # tecla vazia também limpa uma que a cópia antiga tenha
     subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True,
                    creationflags=subprocess.CREATE_NO_WINDOW)
 
