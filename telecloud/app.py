@@ -160,7 +160,7 @@ def principal(argv=None):
         _falha(f"Não foi possível conectar ao Telegram:\n{e}", args)
         return 1
 
-    from .configuracoes import cache_max_bytes
+    from .configuracoes import cache_max_bytes, pausa_envios_s
     cache_max = cache_max_bytes(dados)
 
     try:
@@ -168,6 +168,7 @@ def principal(argv=None):
         from .winfsp import SistemaDeArquivos
         nuvem = Nuvem(indice, arm)
         un = Unidade(nuvem, dados / "cache", cache_max=cache_max)
+        un.pausa_envios = pausa_envios_s(dados)
         fs = SistemaDeArquivos(un, args.unidade)
     except FileNotFoundError:
         _falha("O WinFsp não está instalado. Instale-o em " + LINK_WINFSP + " e abra o TeleCloud de novo.", args)
@@ -204,6 +205,7 @@ def principal(argv=None):
 
     def reler_configuracoes():
         un.cache_max = cache_max_bytes(dados)   # vale já, sem reiniciar
+        un.pausa_envios = pausa_envios_s(dados)
 
     bandeja = Bandeja(un, args.unidade, dados, sair, ao_configurar=reler_configuracoes)
 

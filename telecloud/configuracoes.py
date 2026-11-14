@@ -12,6 +12,7 @@ from . import sistema
 log = logging.getLogger("telecloud")
 PADRAO_CACHE_MB = 5120
 MIN_CACHE_MB = 512
+MAX_PAUSA_S = 60
 
 
 class ErroConfig(Exception):
@@ -25,6 +26,27 @@ def ler(dados: Path) -> dict:
 
 def cache_max_bytes(dados: Path) -> int:
     return int(float(ler(dados).get("cache_max_mb", PADRAO_CACHE_MB)) * 1024 * 1024)
+
+
+def pausa_envios_s(dados: Path) -> float:
+    try:
+        return max(0.0, min(float(ler(dados).get("pausa_envios_s", 0)), MAX_PAUSA_S))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def interpretar_pausa(texto: str) -> float:
+    """'0', '1,5' ou '1.5' (segundos) -> segundos. Vazio vale 0 (sem pausa)."""
+    texto = texto.strip().replace(",", ".")
+    if not texto:
+        return 0.0
+    try:
+        s = float(texto)
+    except ValueError:
+        raise ErroConfig("Digite a pausa como número de segundos, por exemplo 0 (sem pausa) ou 1,5.")
+    if s < 0 or s > MAX_PAUSA_S:
+        raise ErroConfig(f"A pausa deve ficar entre 0 e {MAX_PAUSA_S} segundos.")
+    return s
 
 
 def interpretar_gb(texto: str) -> float:
@@ -47,6 +69,13 @@ def gravar_cache_gb(dados: Path, gb: float):
     (Path(dados) / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
 
 
+def gravar_pausa(dados: Path, segundos: float):
+    cfg = ler(dados)
+    cfg["pausa_envios_s"] = segundos
+    Path(dados).mkdir(parents=True, exist_ok=True)
+    (Path(dados) / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+
 def _gb_texto(mb: float) -> str:
     gb = mb / 1024
     return (f"{gb:.2f}".rstrip("0").rstrip(".")).replace(".", ",")
@@ -61,6 +90,7 @@ def abrir_janela(dados: Path) -> bool:
     atual_mb = ler(dados).get("cache_max_mb", PADRAO_CACHE_MB)
     erro = ""
     texto_campo = _gb_texto(float(atual_mb))
+    texto_pausa = str(pausa_envios_s(dados)).replace(".", ",").removesuffix(",0")
     inicio = sistema.inicio_ativo()
     salvou = False
     while True:
@@ -77,6 +107,16 @@ def abrir_janela(dados: Path) -> bool:
         caixa.Add(wx.StaticText(dlg, label="Limite do cache em disco, em GB:"), 0, wx.LEFT | wx.RIGHT, 12)
         campo = wx.TextCtrl(dlg, value=texto_campo, size=(420, -1), name="Limite do cache em GB")
         caixa.Add(campo, 0, wx.ALL | wx.EXPAND, 12)
+        t2 = wx.StaticText(dlg, label=(
+            "Se você envia milhares de arquivos pequenos, o Telegram pode impor pausas de dezenas de minutos. "
+            "Uma pausa entre os envios evita isso. Use 0 para enviar sem pausa; 1,5 é um bom valor para pastas "
+            "com muitos arquivos."))
+        t2.Wrap(420)
+        caixa.Add(t2, 0, wx.LEFT | wx.RIGHT, 12)
+        caixa.Add(wx.StaticText(dlg, label="Pausa entre envios de arquivos pequenos, em segundos:"),
+                  0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        campo_pausa = wx.TextCtrl(dlg, value=texto_pausa, size=(420, -1), name="Pausa entre envios em segundos")
+        caixa.Add(campo_pausa, 0, wx.ALL | wx.EXPAND, 12)
         marca = wx.CheckBox(dlg, label="Iniciar o TeleCloud com o Windows")
         marca.SetValue(inicio)
         caixa.Add(marca, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
@@ -97,12 +137,14 @@ def abrir_janela(dados: Path) -> bool:
         try:
             if dlg.ShowModal() != wx.ID_OK:
                 break
-            texto_campo, inicio = campo.GetValue(), marca.GetValue()
+            texto_campo, texto_pausa, inicio = campo.GetValue(), campo_pausa.GetValue(), marca.GetValue()
         finally:
             dlg.Destroy()
         try:
             gb = interpretar_gb(texto_campo)
+            pausa = interpretar_pausa(texto_pausa)
             gravar_cache_gb(dados, gb)
+            gravar_pausa(dados, pausa)
             if inicio != sistema.inicio_ativo():
                 sistema.definir_inicio(inicio)
         except ErroConfig as e:

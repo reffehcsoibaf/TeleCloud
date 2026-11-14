@@ -13,6 +13,7 @@ from .nuvem import Nuvem
 from .indice import RAIZ
 
 log = logging.getLogger("telecloud")
+LIMITE_PEQUENO = 8 * 1024 * 1024   # arquivos até este tamanho sofrem a pausa entre envios
 
 SEGUNDO_1601 = 11644473600
 
@@ -79,6 +80,8 @@ class Unidade:
                  cache_max=5 * 1024**3, silencio_indice=20.0):
         self.nuvem = nuvem
         self.cache_max = cache_max
+        self.pausa_envios = 0.0   # segundos de pausa após cada arquivo pequeno enviado (0 = sem pausa)
+        self._ultimo_tamanho = 0
         self.silencio_indice = silencio_indice  # segundos sem alterações antes de guardar o índice
         self.ao_erro = None  # opcional: função(texto) chamada quando a fila falha
         self.atual = None  # arquivo sendo enviado agora
@@ -197,6 +200,7 @@ class Unidade:
             try:
                 if tipo == "env":
                     self._enviar(x)
+                    self._pausar_apos_pequeno()
                 elif tipo == "apg":
                     self.nuvem.arm.apagar(x)
                     self.ix.apagados(x)
@@ -217,6 +221,15 @@ class Unidade:
                         break
                     time.sleep(0.5)
                 self.fila.put((tipo, x))
+
+    def _pausar_apos_pequeno(self):
+        """Evita rajadas de milhares de mensagens (o Telegram responde com pausas longas, o FloodWait).
+        Arquivos grandes já se limitam pelo tempo de transferência, então só os pequenos esperam."""
+        if self.pausa_envios <= 0 or self._ultimo_tamanho > LIMITE_PEQUENO:
+            return
+        fim = time.time() + self.pausa_envios
+        while not self._parar and time.time() < fim:
+            time.sleep(0.1)
 
     def _tarefas_ociosas(self):
         agora = time.time()
@@ -300,6 +313,7 @@ class Unidade:
         self._enviando_id = no_id
         self.atual = self.ix.caminho_de(no_id)
         self.progresso = (0, 0)
+        self._ultimo_tamanho = e.tamanho
         try:
             self.nuvem.enviar_no(no_id, str(e.cache),
                                  lambda feito, total: setattr(self, "progresso", (feito, total)))
