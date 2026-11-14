@@ -147,6 +147,24 @@ class TelegramArmazenamento(Armazenamento):
             return None
         return self._rodar(f())
 
+    def desconectar_conta(self):
+        """Encerra a sessão no Telegram (some da lista de dispositivos) e apaga o arquivo de sessão local.
+        Se não houver rede, ao menos apaga a sessão local."""
+        try:
+            self._rodar(self.client.log_out())
+        except Exception:
+            try:
+                self.fechar()
+            except Exception:
+                pass
+        else:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+        for f in self.pasta.glob("sessao.session*"):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
     def fechar(self):
         async def f():
             await self.client.disconnect()

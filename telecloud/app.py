@@ -198,6 +198,39 @@ def principal(argv=None):
         return 0
 
     from .bandeja import Bandeja
+    reabrir_depois = []   # preenchido por desconectar(): ao fechar, abre de novo para pedir o login
+
+    def desconectar():
+        s = un.situacao()
+        pendentes = len(s["esperando"]) + (1 if s["enviando"] else 0) + s["apagando"]
+        if pendentes:
+            sistema.aviso(f"Ainda há {pendentes} item(ns) esperando envio ao Telegram. Desconectar agora os perderia. "
+                          "Espere a fila terminar (veja o menu da bandeja) e tente de novo.", erro=True)
+            return
+        if not sistema.perguntar(
+                "Desconectar a conta do Telegram?\n\nOs arquivos continuam guardados no Telegram. O TeleCloud vai "
+                "fechar e, ao abrir de novo, pedir o login (com a mesma conta ou outra). Com a mesma conta, o "
+                "índice volta do Telegram."):
+            return
+        if bandeja.saindo:
+            return
+        bandeja.saindo = True
+        bandeja._atualizar(forcar=True)
+        if not un.salvar_indice_agora():
+            bandeja.saindo = False
+            bandeja._atualizar(forcar=True)
+            sistema.aviso("Não consegui guardar o índice no Telegram agora. Nada foi apagado; tente de novo "
+                          "quando a conexão voltar.", erro=True)
+            return
+        fs.desmontar()
+        un.parar()
+        indice.fechar()
+        arm.desconectar_conta()
+        from .configuracoes import esquecer_conta
+        esquecer_conta(dados)
+        log.info("conta desconectada")
+        reabrir_depois.append(True)
+        bandeja.parar()
 
     def sair():
         encerrar()
@@ -207,7 +240,8 @@ def principal(argv=None):
         un.cache_max = cache_max_bytes(dados)   # vale já, sem reiniciar
         un.pausa_envios = pausa_envios_s(dados)
 
-    bandeja = Bandeja(un, args.unidade, dados, sair, ao_configurar=reler_configuracoes)
+    bandeja = Bandeja(un, args.unidade, dados, sair, ao_configurar=reler_configuracoes,
+                      ao_desconectar=None if args.memoria else desconectar)
 
     evento_sair = sistema.criar_evento_sair()   # uma atualização pede por aqui que este programa feche
 
@@ -217,6 +251,8 @@ def principal(argv=None):
     threading.Thread(target=esperar_pedido, daemon=True).start()
     bandeja.executar(ao_pronto=lambda: bandeja.avisar(
         f"Unidade {args.unidade} pronta. Use o ícone perto do relógio para ver os envios."))
+    if reabrir_depois:
+        _reabrir(argv)
     return 0
 
 

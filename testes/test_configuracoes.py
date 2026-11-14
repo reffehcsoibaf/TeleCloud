@@ -34,3 +34,17 @@ def test_pausa_envios(tmp_path):
     gravar_pausa(tmp_path, 1.5)
     assert pausa_envios_s(tmp_path) == 1.5
     assert json.loads((tmp_path / "config.json").read_text())["api_id"] == 1
+
+
+def test_esquecer_conta_mantem_chaves(tmp_path):
+    from telecloud.configuracoes import esquecer_conta
+    (tmp_path / "config.json").write_text(json.dumps(
+        {"api_id": 1, "api_hash": "x", "grupo_id": 99, "topicos": {"a": 1}, "cache_max_mb": 1024}))
+    for nome in ("indice.db", "pausa_telegram.json"):
+        (tmp_path / nome).write_text("x")
+    (tmp_path / "cache").mkdir()
+    (tmp_path / "cache" / "1.bin").write_text("x")
+    esquecer_conta(tmp_path)
+    assert json.loads((tmp_path / "config.json").read_text()) == {"api_id": 1, "api_hash": "x", "cache_max_mb": 1024}
+    assert not (tmp_path / "indice.db").exists() and not (tmp_path / "cache").exists()
+    assert not (tmp_path / "pausa_telegram.json").exists()

@@ -76,6 +76,20 @@ def gravar_pausa(dados: Path, segundos: float):
     (Path(dados) / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
 
 
+def esquecer_conta(dados: Path):
+    """Apaga o que pertence à conta atual: índice local, cache, pausa e o grupo guardado. Mantém as chaves da API
+    (api_id e api_hash), que não dependem da conta. O que está no Telegram não é tocado."""
+    import shutil
+    dados = Path(dados)
+    cfg = ler(dados)
+    for k in ("grupo_id", "topicos"):
+        cfg.pop(k, None)
+    (dados / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    for nome in ("indice.db", "indice.db-wal", "indice.db-shm", "pausa_telegram.json"):
+        (dados / nome).unlink(missing_ok=True)
+    shutil.rmtree(dados / "cache", ignore_errors=True)
+
+
 def _gb_texto(mb: float) -> str:
     gb = mb / 1024
     return (f"{gb:.2f}".rstrip("0").rstrip(".")).replace(".", ",")

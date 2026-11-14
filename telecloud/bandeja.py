@@ -31,8 +31,9 @@ ICONES = {"ok": "#229ED9", "ocupado": "#E08A00", "erro": "#C62828"}
 
 
 class Bandeja:
-    def __init__(self, un, unidade_letra: str, pasta_dados, ao_sair, ao_configurar=None):
+    def __init__(self, un, unidade_letra: str, pasta_dados, ao_sair, ao_configurar=None, ao_desconectar=None):
         self.un = un
+        self.ao_desconectar = ao_desconectar   # chamada em outra thread; confirma, limpa e fecha o programa
         self.ao_configurar = ao_configurar   # chamada quando a janela de configurações fecha
         self._janela_config = None
         self.letra = unidade_letra
@@ -49,6 +50,9 @@ class Bandeja:
         if self.saindo:
             return "Encerrando: aguardando os envios terminarem", "ocupado"
         s = self.un.situacao()
+        if s["pausa_ate"] > time.time():
+            hora = time.strftime("%H:%M", time.localtime(s["pausa_ate"]))
+            return f"O Telegram pediu uma pausa; os envios continuam às {hora}", "ocupado"
         if s["erro"]:
             return "Problema ao falar com o Telegram; tentando de novo", "erro"
         if s["enviando"]:
@@ -103,6 +107,8 @@ class Bandeja:
             pystray.MenuItem("Guardar o índice no Telegram agora", self._guardar_indice),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Configurações...", self._configuracoes),
+            *([pystray.MenuItem("Desconectar a conta do Telegram...", self._desconectar)]
+              if self.ao_desconectar else []),
             pystray.MenuItem("Iniciar com o Windows", self._alternar_inicio,
                              checked=lambda _: sistema.inicio_ativo()),
             pystray.MenuItem("Abrir a pasta de dados e registro", self._abrir_dados),
@@ -149,6 +155,11 @@ class Bandeja:
     def _alternar_inicio(self, *_):
         sistema.definir_inicio(not sistema.inicio_ativo())
         self.icone.update_menu()
+
+    def _desconectar(self, *_):
+        if self.saindo:
+            return
+        threading.Thread(target=self.ao_desconectar, daemon=True).start()
 
     def _sair(self, *_):
         if self.saindo:

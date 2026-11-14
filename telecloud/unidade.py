@@ -1,5 +1,6 @@
 ﻿"""Operações do sistema de arquivos: traduz o WinFsp para a Nuvem, com cache local e envio em segundo plano."""
 import ctypes
+import json
 import logging
 import os
 import queue
@@ -94,6 +95,9 @@ class Unidade:
         self.cache_dir = Path(pasta_cache)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.rotulo = rotulo
+        # Pausa imposta pelo Telegram (FloodWait): guardada em disco para valer também se o programa for reaberto
+        self._arq_pausa = self.cache_dir.parent / "pausa_telegram.json"
+        self.pausa_ate = self._ler_pausa()
         self.trava = threading.RLock()
         self.estados: dict[int, Estado] = {}
         self.alcas: dict[int, Alca] = {}
@@ -190,8 +194,26 @@ class Unidade:
         if not ja:
             self.fila.put(("env", e.no_id))
 
+    def _ler_pausa(self) -> float:
+        try:
+            t = float(json.loads(self._arq_pausa.read_text(encoding="utf-8")).get("ate", 0))
+        except (OSError, ValueError, TypeError, AttributeError):
+            return 0.0
+        return t if t > time.time() else 0.0
+
+    def _definir_pausa(self, segundos: float):
+        self.pausa_ate = time.time() + segundos
+        try:
+            self._arq_pausa.write_text(json.dumps({"ate": self.pausa_ate}), encoding="utf-8")
+        except OSError:
+            log.exception("não consegui guardar a pausa do Telegram")
+
     def _trabalhar(self):
         while not self._parar:
+            if self.pausa_ate > time.time():   # o Telegram pediu para esperar: nem tenta antes disso
+                time.sleep(0.5)
+                self._tarefas_ociosas()
+                continue
             try:
                 tipo, x = self.fila.get(timeout=0.5)
             except queue.Empty:
@@ -208,7 +230,10 @@ class Unidade:
                 self.erro = None
             except Exception as ex:
                 self._falhas += 1
-                espera = getattr(ex, "seconds", None) or min(300, 15 * 2 ** (self._falhas - 1))
+                pedida = getattr(ex, "seconds", None)   # FloodWait: o Telegram diz quanto esperar
+                espera = pedida + 3 if pedida else min(300, 15 * 2 ** (self._falhas - 1))
+                if pedida:
+                    self._definir_pausa(espera)
                 self.erro = f"{type(ex).__name__}: {ex}"
                 log.exception("falha na fila (%s); tentando de novo em %s s", tipo, espera)
                 if self.ao_erro and self._falhas in (1, 5):
@@ -216,10 +241,11 @@ class Unidade:
                         self.ao_erro(f"Falha ao falar com o Telegram. Nova tentativa em {int(espera)} segundos.")
                     except Exception:
                         pass
-                for _ in range(int(espera * 2)):
-                    if self._parar:
-                        break
-                    time.sleep(0.5)
+                if not pedida:
+                    for _ in range(int(espera * 2)):
+                        if self._parar:
+                            break
+                        time.sleep(0.5)
                 self.fila.put((tipo, x))
 
     def _pausar_apos_pequeno(self):
@@ -337,7 +363,7 @@ class Unidade:
         return {
             "enviando": self.atual, "progresso": self.progresso, "esperando": esperando,
             "apagando": len(self.ix.apagar_pendentes()), "cache": self.tamanho_cache(),
-            "cache_max": self.cache_max, "erro": self.erro, "indice_salvo_em": self.indice_salvo_em,
+            "cache_max": self.cache_max, "erro": self.erro, "pausa_ate": self.pausa_ate, "indice_salvo_em": self.indice_salvo_em,
         }
 
     def _apagar_remoto(self, refs):

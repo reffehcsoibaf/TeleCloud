@@ -51,3 +51,35 @@ def test_menu_monta_com_todos_os_itens(tmp_path):
         assert any("Sair" == str(t) for t in textos)
     finally:
         un.parar()
+
+
+def test_pausa_do_telegram_vale_ate_reabrir(tmp_path):
+    import time
+    nuvem = Nuvem(Indice(), ArmazenamentoMemoria())
+    un = Unidade(nuvem, tmp_path / "c")
+    try:
+        assert un.pausa_ate == 0
+        un._definir_pausa(600)
+        b = Bandeja(un, "T:", tmp_path, threading.Event().set)
+        texto, nivel = b._resumo()
+        assert texto.startswith("O Telegram pediu uma pausa") and nivel == "ocupado"
+    finally:
+        un.parar()
+    outra = Unidade(Nuvem(Indice(), ArmazenamentoMemoria()), tmp_path / "c")
+    try:
+        assert outra.pausa_ate > time.time() + 500   # a pausa sobrevive a fechar e abrir o programa
+    finally:
+        outra.parar()
+
+
+def test_menu_tem_desconectar_so_quando_ha_acao(tmp_path):
+    nuvem = Nuvem(Indice(), ArmazenamentoMemoria())
+    un = Unidade(nuvem, tmp_path / "c")
+    try:
+        sem = Bandeja(un, "T:", tmp_path, lambda: None)
+        com = Bandeja(un, "T:", tmp_path, lambda: None, ao_desconectar=lambda: None)
+        textos = lambda b: [str(i.text) for i in b.icone.menu.items]
+        assert not any("Desconectar" in t for t in textos(sem))
+        assert any("Desconectar a conta" in t for t in textos(com))
+    finally:
+        un.parar()
