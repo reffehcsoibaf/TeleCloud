@@ -48,3 +48,19 @@ def test_esquecer_conta_mantem_chaves(tmp_path):
     assert json.loads((tmp_path / "config.json").read_text()) == {"api_id": 1, "api_hash": "x", "cache_max_mb": 1024}
     assert not (tmp_path / "indice.db").exists() and not (tmp_path / "cache").exists()
     assert not (tmp_path / "pausa_telegram.json").exists()
+
+
+def test_tamanho_da_parte(tmp_path):
+    import pytest
+    from telecloud.configuracoes import (ErroConfig, gravar_parte, interpretar_parte,
+                                         tamanho_parte_bytes)
+    assert tamanho_parte_bytes(tmp_path) == 64 * 1024 * 1024   # padrão
+    assert interpretar_parte("") == 64
+    assert interpretar_parte(" 32 ") == 32
+    for ruim in ("abc", "1,5", "3", "513", "-8"):
+        with pytest.raises(ErroConfig):
+            interpretar_parte(ruim)
+    gravar_parte(tmp_path, 16)
+    assert tamanho_parte_bytes(tmp_path) == 16 * 1024 * 1024
+    (tmp_path / "config.json").write_text('{"tamanho_parte_mb": 99999}')
+    assert tamanho_parte_bytes(tmp_path) == 512 * 1024 * 1024   # limitado

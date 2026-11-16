@@ -13,6 +13,9 @@ log = logging.getLogger("telecloud")
 PADRAO_CACHE_MB = 5120
 MIN_CACHE_MB = 512
 MAX_PAUSA_S = 60
+PADRAO_PARTE_MB = 64
+MIN_PARTE_MB = 4
+MAX_PARTE_MB = 512
 
 
 class ErroConfig(Exception):
@@ -33,6 +36,28 @@ def pausa_envios_s(dados: Path) -> float:
         return max(0.0, min(float(ler(dados).get("pausa_envios_s", 0)), MAX_PAUSA_S))
     except (TypeError, ValueError):
         return 0.0
+
+
+def tamanho_parte_bytes(dados: Path) -> int:
+    try:
+        mb = float(ler(dados).get("tamanho_parte_mb", PADRAO_PARTE_MB))
+    except (TypeError, ValueError):
+        mb = PADRAO_PARTE_MB
+    return int(max(MIN_PARTE_MB, min(mb, MAX_PARTE_MB)) * 1024 * 1024)
+
+
+def interpretar_parte(texto: str) -> int:
+    """'64' (em MB) -> MB. Vazio vale o padrão."""
+    texto = texto.strip()
+    if not texto:
+        return PADRAO_PARTE_MB
+    try:
+        mb = int(texto)
+    except ValueError:
+        raise ErroConfig("Digite o tamanho da parte como número inteiro de megabytes, por exemplo 64.")
+    if mb < MIN_PARTE_MB or mb > MAX_PARTE_MB:
+        raise ErroConfig(f"O tamanho da parte deve ficar entre {MIN_PARTE_MB} e {MAX_PARTE_MB} MB.")
+    return mb
 
 
 def interpretar_pausa(texto: str) -> float:
@@ -76,6 +101,13 @@ def gravar_pausa(dados: Path, segundos: float):
     (Path(dados) / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
 
 
+def gravar_parte(dados: Path, mb: int):
+    cfg = ler(dados)
+    cfg["tamanho_parte_mb"] = mb
+    Path(dados).mkdir(parents=True, exist_ok=True)
+    (Path(dados) / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+
 def esquecer_conta(dados: Path):
     """Apaga o que pertence à conta atual: índice local, cache, pausa e o grupo guardado. Mantém as chaves da API
     (api_id e api_hash), que não dependem da conta. O que está no Telegram não é tocado."""
@@ -105,6 +137,7 @@ def abrir_janela(dados: Path) -> bool:
     erro = ""
     texto_campo = _gb_texto(float(atual_mb))
     texto_pausa = str(pausa_envios_s(dados)).replace(".", ",").removesuffix(",0")
+    texto_parte = str(tamanho_parte_bytes(dados) // (1024 * 1024))
     inicio = sistema.inicio_ativo()
     salvou = False
     while True:
@@ -131,6 +164,17 @@ def abrir_janela(dados: Path) -> bool:
                   0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
         campo_pausa = wx.TextCtrl(dlg, value=texto_pausa, size=(420, -1), name="Pausa entre envios em segundos")
         caixa.Add(campo_pausa, 0, wx.ALL | wx.EXPAND, 12)
+        t3 = wx.StaticText(dlg, label=(
+            "Cada arquivo grande é dividido em partes antes de ir para o Telegram. Partes menores abrem vídeos "
+            "mais rápido e refazem menos se a conexão cair, mas geram mais mensagens no grupo. Partes maiores "
+            "geram menos mensagens e usam mais memória. Vale só para arquivos enviados depois; os que já estão "
+            f"guardados não mudam. Padrão: {PADRAO_PARTE_MB}."))
+        t3.Wrap(420)
+        caixa.Add(t3, 0, wx.LEFT | wx.RIGHT, 12)
+        caixa.Add(wx.StaticText(dlg, label=f"Tamanho de cada parte, em MB ({MIN_PARTE_MB} a {MAX_PARTE_MB}):"),
+                  0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        campo_parte = wx.TextCtrl(dlg, value=texto_parte, size=(420, -1), name="Tamanho de cada parte em MB")
+        caixa.Add(campo_parte, 0, wx.ALL | wx.EXPAND, 12)
         marca = wx.CheckBox(dlg, label="Iniciar o TeleCloud com o Windows")
         marca.SetValue(inicio)
         caixa.Add(marca, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
@@ -152,13 +196,16 @@ def abrir_janela(dados: Path) -> bool:
             if dlg.ShowModal() != wx.ID_OK:
                 break
             texto_campo, texto_pausa, inicio = campo.GetValue(), campo_pausa.GetValue(), marca.GetValue()
+            texto_parte = campo_parte.GetValue()
         finally:
             dlg.Destroy()
         try:
             gb = interpretar_gb(texto_campo)
             pausa = interpretar_pausa(texto_pausa)
+            parte = interpretar_parte(texto_parte)
             gravar_cache_gb(dados, gb)
             gravar_pausa(dados, pausa)
+            gravar_parte(dados, parte)
             if inicio != sistema.inicio_ativo():
                 sistema.definir_inicio(inicio)
         except ErroConfig as e:

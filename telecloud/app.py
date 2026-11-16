@@ -165,13 +165,13 @@ def principal(argv=None):
         _falha(f"Não foi possível conectar ao Telegram:\n{e}", args)
         return 1
 
-    from .configuracoes import cache_max_bytes, pausa_envios_s
+    from .configuracoes import cache_max_bytes, pausa_envios_s, tamanho_parte_bytes
     cache_max = cache_max_bytes(dados)
 
     try:
         from .unidade import Unidade
         from .winfsp import SistemaDeArquivos
-        nuvem = Nuvem(indice, arm)
+        nuvem = Nuvem(indice, arm, tamanho_parte=tamanho_parte_bytes(dados))
         un = Unidade(nuvem, dados / "cache", cache_max=cache_max)
         un.pausa_envios = pausa_envios_s(dados)
         fs = SistemaDeArquivos(un, args.unidade)
@@ -248,6 +248,7 @@ def principal(argv=None):
     def reler_configuracoes():
         un.cache_max = cache_max_bytes(dados)   # vale já, sem reiniciar
         un.pausa_envios = pausa_envios_s(dados)
+        nuvem.tamanho_parte = tamanho_parte_bytes(dados)
 
     bandeja = Bandeja(un, args.unidade, dados, sair, ao_configurar=reler_configuracoes,
                       ao_desconectar=None if args.memoria else desconectar)
