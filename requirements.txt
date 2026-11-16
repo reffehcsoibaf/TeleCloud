@@ -1,5 +1,6 @@
 telethon
 cryptography
+cryptg
 pystray
 pillow
 pyinstaller

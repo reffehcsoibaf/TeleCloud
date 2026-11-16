@@ -16,7 +16,7 @@ if not msi:
 
 subprocess.run(
     [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--noconsole",
-     "--name", "TeleCloud", "--add-data", f"{msi[-1]};.", "--icon", str(ico), "--hidden-import", "pystray._win32", "--exclude-module", "tkinter",
+     "--name", "TeleCloud", "--add-data", f"{msi[-1]};.", "--icon", str(ico), "--hidden-import", "pystray._win32", "--hidden-import", "cryptg", "--exclude-module", "tkinter",
      "--distpath", str(raiz / "dist"), "--workpath", str(raiz / "build" / "pyi"),
      "--specpath", str(raiz / "build"), str(raiz / "montar.py")],
     check=True)
