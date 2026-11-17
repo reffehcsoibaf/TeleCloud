@@ -107,8 +107,10 @@ class TelegramArmazenamento(Armazenamento):
             topico = await self._topico(pasta)
             arq = io.BytesIO(dados)
             arq.name = nome
+            # Pedidos de 512 KB (o máximo do Telegram no envio). Sem isso o Telethon usa 128 KB abaixo de 100 MB.
+            enviado = await self.client.upload_file(arq, part_size_kb=512, file_size=len(dados), file_name=nome)
             m = await self.client.send_file(
-                self.grupo, arq, caption=legenda or None, reply_to=topico,
+                self.grupo, enviado, caption=legenda or None, reply_to=topico,
                 force_document=True, file_name=nome)
             return str(m.id)
         return self._rodar(f())
