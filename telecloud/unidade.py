@@ -30,7 +30,11 @@ def seguro(f):
     @functools.wraps(f)
     def g(self, *a):
         try:
+            t0 = time.time()
             r = f(self, *a)
+            dt = time.time() - t0
+            if dt > 0.2:
+                log.info("lento: %s levou %.1f s %s", f.__name__, dt, [x for x in a[1:] if isinstance(x, str)][:2])
             if r not in (0, None):
                 log.info("%s -> 0x%08X %s", f.__name__, r, [x for x in a[1:] if isinstance(x, (str, int))][:4])
             return r
@@ -57,6 +61,27 @@ class Estado:
         self.sujo = False
         self.na_fila = False
         self.acesso = time.time()
+        self.integro = False   # cache completo e igual ao que está no Telegram (há um .ok no disco)
+
+    @property
+    def marca(self) -> Path:
+        return self.cache.with_suffix(".ok")
+
+    def marcar_integro(self):
+        """Grava a marca que permite manter este cache depois de reiniciar o programa."""
+        try:
+            self.marca.write_text(str(self.tamanho), encoding="ascii")
+            self.integro = True
+        except OSError:
+            pass
+
+    def desmarcar_integro(self):
+        if self.integro:
+            self.integro = False
+            try:
+                self.marca.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def abrir(self):
         if self.fh is None:
@@ -113,12 +138,22 @@ class Unidade:
 
         pend = set(self.ix.pendentes_de_envio())
         # cache de arquivos já enviados não é confiável após reiniciar (partes em memória): limpa
+        # Mantém o cache dos arquivos completos e iguais ao do Telegram (têm marca .ok com o tamanho certo);
+        # o resto não é confiável (partes só em memória) e é apagado.
         for f in self.cache_dir.glob("*.bin"):
             try:
-                if int(f.stem) not in pend:
+                i = int(f.stem)
+                if i not in pend and not self._cache_integro(i, f):
                     f.unlink()
+                    f.with_suffix(".ok").unlink(missing_ok=True)
             except (ValueError, OSError):
                 pass
+        for f in self.cache_dir.glob("*.ok"):
+            if not f.with_suffix(".bin").exists():
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
         for i in pend:
             e = self._estado(i)
             e.completo = True
@@ -131,6 +166,16 @@ class Unidade:
         self.worker.start()
 
     # ---------- infraestrutura ----------
+    def _cache_integro(self, no_id: int, arq: Path) -> bool:
+        no = self.ix.obter(no_id)
+        if not no or no.pasta or not no.tamanho or not self.ix.partes(no_id):
+            return False
+        try:
+            return (int(arq.with_suffix(".ok").read_text(encoding="ascii").strip()) == no.tamanho
+                    == arq.stat().st_size)
+        except (OSError, ValueError):
+            return False
+
     def _estado(self, no_id) -> Estado:
         with self.trava:
             e = self.estados.get(no_id)
@@ -142,6 +187,10 @@ class Unidade:
                     e.completo = True
                 elif no and no.tamanho == 0:
                     e.completo = True
+                elif no and self._cache_integro(no_id, e.cache):
+                    e.completo = True
+                    e.integro = True
+                    e.partes_ok = {p.seq for p in self.ix.partes(no_id)}
                 self.estados[no_id] = e
             return e
 
@@ -182,6 +231,8 @@ class Unidade:
                 pos += p.tamanho
             if len(e.partes_ok) >= len(partes):
                 e.completo = True
+                if not e.sujo:
+                    e.marcar_integro()
 
     def _agendar_envio(self, e: Estado, mudou=True):
         with e.lock:
@@ -300,18 +351,20 @@ class Unidade:
                 pass
         return total
 
-    def limpar_cache(self):
-        """Apaga do disco os arquivos mais antigos já guardados no Telegram, até caber no limite."""
-        total = self.tamanho_cache()
-        if total <= self.cache_max:
-            return
+    def limpar_cache(self, limite=None) -> int:
+        """Apaga do disco os arquivos mais antigos já guardados no Telegram, até caber no limite
+        (o das configurações; 0 apaga tudo o que puder). Devolve quantos bytes liberou."""
+        limite = self.cache_max if limite is None else limite
+        inicio = total = self.tamanho_cache()
+        if total <= limite:
+            return 0
         with self.trava:
             candidatos = [e for e in self.estados.values()
                           if e.refs <= 0 and not e.sujo and not e.na_fila
                           and e.no_id != self._enviando_id and self.ix.partes(e.no_id)]
             candidatos.sort(key=lambda e: e.acesso)
             for e in candidatos:
-                if total <= self.cache_max:
+                if total <= limite:
                     break
                 try:
                     tam = e.cache.stat().st_size
@@ -321,11 +374,14 @@ class Unidade:
                     e.fechar_fh()
                     try:
                         e.cache.unlink(missing_ok=True)
+                        e.integro = True
+                        e.desmarcar_integro()
                     except OSError:
                         continue
                 self.estados.pop(e.no_id, None)
                 total -= tam
                 log.info("cache: liberado %s", self.ix.caminho_de(e.no_id))
+        return inicio - total
 
     def _enviar(self, no_id):
         e = self.estados.get(no_id)
@@ -358,6 +414,7 @@ class Unidade:
                 e.sujo = False
                 e.completo = True
                 e.partes_ok = {p.seq for p in self.ix.partes(no_id)}
+                e.marcar_integro()
         log.info("enviado: %s", self.ix.caminho_de(no_id))
 
     def situacao(self) -> dict:
@@ -457,6 +514,7 @@ class Unidade:
         a = self.alcas[ctx]
         e = a.estado
         with e.lock:
+            e.desmarcar_integro()
             e.abrir().truncate(0)
             e.tamanho = 0
             e.completo = True
@@ -480,6 +538,8 @@ class Unidade:
                     a.estado.cache.unlink()
                 except OSError:
                     pass
+                a.estado.integro = True
+                a.estado.desmarcar_integro()
                 self.estados.pop(a.no_id, None)
         elif a.estado and a.estado.sujo:
             self._agendar_envio(a.estado, mudou=False)
@@ -528,6 +588,7 @@ class Unidade:
                     return w.STATUS_SUCCESS
                 tam = min(tam, e.tamanho - off)
             dados = ctypes.string_at(buf, tam)
+            e.desmarcar_integro()
             fh = e.abrir()
             fh.seek(off)
             fh.write(dados)
@@ -564,6 +625,7 @@ class Unidade:
         if not so_alocacao:
             self._garantir(e, 0, e.tamanho)
             with e.lock:
+                e.desmarcar_integro()
                 e.abrir().truncate(novo)
                 e.tamanho = novo
                 e.sujo = True

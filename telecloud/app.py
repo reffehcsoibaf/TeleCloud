@@ -261,6 +261,19 @@ def principal(argv=None):
     threading.Thread(target=esperar_pedido, daemon=True).start()
     if not args.memoria:
         evento_desc = sistema.criar_evento_desconectar()   # o painel de controle pede por aqui
+        evento_cache = sistema.criar_evento_limpar_cache()
+
+        def esperar_limpar_cache():
+            while True:
+                sistema.esperar_pedido_sair(evento_cache)
+                try:
+                    liberado = un.limpar_cache(0)
+                    bandeja.avisar(f"Cache limpo: {liberado / 1024**2:.0f} MB liberados. "
+                                   "O que está em envio foi mantido.")
+                except Exception:
+                    log.exception("falha ao limpar o cache")
+                    bandeja.avisar("Não consegui limpar o cache. Veja o registro do TeleCloud.")
+        threading.Thread(target=esperar_limpar_cache, daemon=True).start()
 
         def esperar_desconectar():
             while True:

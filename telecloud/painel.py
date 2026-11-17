@@ -156,6 +156,13 @@ def abrir_painel(dados: Path):
         else:
             avisar("O TeleCloud não está aberto, ou é de uma versão que não aceita este pedido.")
 
+    def limpar_cache():
+        if sistema.acionar_evento(sistema.EVENTO_LIMPAR_CACHE):
+            avisar("Pedido enviado. O TeleCloud está apagando do disco os arquivos que já estão guardados no "
+                   "Telegram. O espaço liberado aparece no aviso do TeleCloud.")
+        else:
+            avisar("O TeleCloud não está aberto, ou é de uma versão que não aceita este pedido.")
+
     def sair():
         if sistema.pedir_para_sair():
             avisar("Pedido enviado. O TeleCloud está fechando.")
@@ -167,6 +174,7 @@ def abrir_painel(dados: Path):
     botao("config", "&Configurações", configuracoes)
     botao("verificar", "&Verificar atualizações", verificar)
     botao("instalar", "&Baixar e instalar a versão nova", instalar).Hide()
+    botao("cache", "&Limpar o cache do disco", limpar_cache)
     botao("desconectar", "&Desconectar a conta do Telegram", desconectar)
     botao("sair", "&Sair do TeleCloud", sair)
     botao("fechar", "Fe&char esta janela", quadro.Close)

@@ -10,7 +10,7 @@ from pathlib import Path
 NOME = "TeleCloud"
 CHAVE_INICIO = r"Software\Microsoft\Windows\CurrentVersion\Run"
 CHAVE_DESINSTALAR = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\TeleCloud"
-VERSAO = "2026.11.17.1"
+VERSAO = "2026.11.17.2"
 
 MB_OK, MB_YESNO, MB_ICONINFO, MB_ICONERRO, MB_ICONPERGUNTA = 0x0, 0x4, 0x40, 0x10, 0x20
 IDYES = 6
@@ -85,6 +85,7 @@ def esperar_pedido_sair(evento) -> None:
 
 
 EVENTO_DESCONECTAR = "Local\\TeleCloud-pedido-desconectar"
+EVENTO_LIMPAR_CACHE = "Local\\TeleCloud-pedido-limpar-cache"
 
 
 def acionar_evento(nome: str) -> bool:
@@ -102,6 +103,12 @@ def acionar_evento(nome: str) -> bool:
 def pedir_para_sair() -> bool:
     """Pede à cópia em execução que feche. False se ela não entende o pedido."""
     return acionar_evento(EVENTO_SAIR)
+
+
+def criar_evento_limpar_cache():
+    k = ctypes.windll.kernel32
+    k.CreateEventW.restype = ctypes.c_void_p
+    return k.CreateEventW(None, False, False, EVENTO_LIMPAR_CACHE)   # rearma sozinho a cada pedido
 
 
 def criar_evento_desconectar():

@@ -136,3 +136,45 @@ def test_falha_no_meio_do_envio_nao_deixa_partes_soltas(tmp_path):
     except RuntimeError:
         pass
     assert not arm.blocos and not nuvem.indice.partes(no.id)
+
+
+def test_cache_completo_sobrevive_a_reinicio(tmp_path):
+    arm = ArmazenamentoMemoria()
+    ix = Indice(str(tmp_path / "i.db"))
+    nuvem = Nuvem(ix, arm, tamanho_parte=4)
+    no = nuvem.gravar("a.bin", b"0123456789")
+    pasta = tmp_path / "cache"
+    pasta.mkdir()
+    (pasta / f"{no.id}.bin").write_bytes(b"0123456789")
+    (pasta / f"{no.id}.ok").write_text("10")
+    un = Unidade(nuvem, pasta)
+    try:
+        e = un._estado(no.id)
+        assert (pasta / f"{no.id}.bin").exists() and e.completo and e.integro
+        e.desmarcar_integro()          # qualquer escrita invalida a marca
+        assert not (pasta / f"{no.id}.ok").exists()
+    finally:
+        un.parar()
+    # sem marca (ou com tamanho diferente): o cache é apagado ao reiniciar
+    un2 = Unidade(nuvem, pasta)
+    try:
+        assert not (pasta / f"{no.id}.bin").exists()
+    finally:
+        un2.parar()
+
+
+def test_limpar_cache_a_pedido_apaga_tudo_que_ja_esta_no_telegram(tmp_path):
+    un, nuvem, arm = _unidade(tmp_path, cache_max=10**9)
+    try:
+        no = nuvem.gravar("a.bin", b"0123456789")
+        e = un._estado(no.id)
+        e.abrir().write(b"0123456789")
+        e.fechar_fh()
+        e.tamanho = 10
+        e.marcar_integro()
+        assert un.limpar_cache() == 0            # dentro do limite: não apaga
+        assert (un.cache_dir / f"{no.id}.bin").exists()
+        assert un.limpar_cache(0) == 10          # pedido do usuário: apaga
+        assert not (un.cache_dir / f"{no.id}.bin").exists() and not (un.cache_dir / f"{no.id}.ok").exists()
+    finally:
+        un.parar()
