@@ -65,6 +65,7 @@ class Indice:
         return No(l[0], l[1], l[2], bool(l[3]), l[4], l[5], l[6])
 
     _COLS = "id,pai,nome,pasta,tamanho,modificado,tags"
+    _COL_NOME = 2
 
     def resolver(self, caminho: str) -> No | None:
         """Resolve 'a/b/c' (ou '\\a\\b\\c') para um nó; '' ou '/' é a raiz."""
@@ -74,7 +75,16 @@ class Indice:
                 f"SELECT {self._COLS} FROM nos WHERE pai=? AND nome=?", (atual, parte)
             ).fetchone()
             if not l:
-                return None
+                # O Windows ignora maiúsculas/minúsculas (o Explorer manda o caminho em caixa alta ao renomear);
+                # o COLLATE NOCASE do SQLite só cobre ASCII, então compara com casefold (acentos incluídos).
+                alvo = parte.casefold()
+                l = next(
+                    (x for x in self.bd.execute(
+                        f"SELECT {self._COLS} FROM nos WHERE pai=?", (atual,)) if x[self._COL_NOME].casefold() == alvo),
+                    None,
+                )
+                if not l:
+                    return None
             atual = l[0]
         return self.obter(atual)
 
