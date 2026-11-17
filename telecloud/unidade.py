@@ -334,8 +334,12 @@ class Unidade:
         with e.lock:
             e.na_fila = False
             v = e.versao
-            if e.fh:
-                e.fh.flush()
+            fh = e.fh
+            if fh:
+                try:
+                    fh.flush()
+                except (ValueError, OSError):
+                    pass   # o Close fechou o arquivo agora há pouco: fechar já descarrega os dados
         self._enviando_id = no_id
         self.atual = self.ix.caminho_de(no_id)
         self.progresso = (0, 0)

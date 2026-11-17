@@ -118,7 +118,12 @@ class TelegramArmazenamento(Armazenamento):
             m = await self.client.get_messages(self.grupo, ids=int(ref))
             if m is None:
                 raise FileNotFoundError(ref)
-            return await self.client.download_media(m, file=bytes)
+            doc = m.document
+            if doc is None:
+                return await self.client.download_media(m, file=bytes)
+            # Pedidos de 512 KB (o máximo do Telethon) em vez dos 128 KB padrão: 4x menos idas e vindas à rede.
+            return await self.client.download_file(
+                doc, file=bytes, part_size_kb=512, file_size=doc.size, dc_id=doc.dc_id)
         return self._rodar(f())
 
     def apagar(self, refs):
