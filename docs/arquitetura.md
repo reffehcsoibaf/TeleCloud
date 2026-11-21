@@ -19,6 +19,7 @@ Unidade virtual no Windows (WinFsp) cujo conteúdo fica no Telegram.
 - O índice é salvo no próprio Telegram (arquivo fixado) para recuperar num PC novo.
 
 ## Camadas adicionais
+- `letraglobal.py` e `ajudante.py`: letra da unidade visível também para programas executados como administrador. O UAC dá a esses programas outra sessão de logon, que não enxerga a letra criada pelo WinFsp na sessão do usuário. O `ajudante.py` (vira `TeleCloudAjudante.exe`, embutido no `.exe`) roda como SYSTEM, iniciado pelo launcher do WinFsp, cria o mesmo vínculo no espaço global (`DefineDosDevice`) e o remove quando o TeleCloud termina. Fica em `C:\Program Files\TeleCloud` (o SYSTEM não pode executar nada de pasta que o usuário altere), só aceita letras D: a Z: livres e alvos `\Device\Volume{GUID}`, e o registro no launcher libera só o usuário que o instalou. Log em `%ProgramData%\TeleCloud\ajudante.log`.
 - `unidade.py`: callbacks do WinFsp, cache local, fila de envio em segundo plano (com espera crescente nas falhas), exclusões remotas persistidas, limpeza do cache por último uso e guarda do índice após silêncio.
 - `sistema.py`: instância única, iniciar com o Windows, instalar/desinstalar pelo próprio .exe, console para o login.
 - `bandeja.py`: ícone e menu nativo; `app.py`: fluxo principal; `construir.py`: gera o .exe.

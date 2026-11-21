@@ -13,6 +13,9 @@ O `.exe` também é o instalador: ao abrir fora da pasta de instalação ele per
 ## Menu do ícone da bandeja
 Menu nativo (teclado e leitor de tela): estado dos envios, fila de envios, espaço usado no disco, quando o índice foi guardado, guardar o índice agora, Configurações (janela com o limite do cache e o início com o Windows), iniciar com o Windows, abrir a pasta de dados/registro e Sair (espera os envios pendentes terminarem).
 
+## Unidade também em programas como administrador
+Por causa do UAC do Windows, um programa executado como administrador não enxerga a unidade T: criada na sessão normal. Em Configurações, marque "Mostrar a unidade também para programas executados como administrador". O Windows pede a permissão de administrador uma única vez, para instalar um pequeno ajudante em `C:\Program Files\TeleCloud`; a partir daí a unidade aparece nos dois tipos de programa enquanto o TeleCloud estiver aberto. A desinstalação oferece remover o ajudante. Se a opção estiver desligada ou o ajudante falhar, a unidade funciona como antes, só para programas comuns.
+
 ## Comportamento
 - Gravar é rápido: o arquivo vai para o cache em `dados\cache` e sobe ao Telegram em segundo plano. Se o programa fechar no meio, retoma no próximo início.
 - Arquivos são divididos em partes de 64 MB; só a parte lida é baixada.

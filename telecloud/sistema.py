@@ -10,7 +10,7 @@ from pathlib import Path
 NOME = "TeleCloud"
 CHAVE_INICIO = r"Software\Microsoft\Windows\CurrentVersion\Run"
 CHAVE_DESINSTALAR = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\TeleCloud"
-VERSAO = "2026.11.17.3"
+VERSAO = "2026.11.20.0"
 
 MB_OK, MB_YESNO, MB_ICONINFO, MB_ICONERRO, MB_ICONPERGUNTA = 0x0, 0x4, 0x40, 0x10, 0x20
 IDYES = 6
@@ -291,6 +291,14 @@ def instalar_winfsp() -> bool:
     if msi is None:
         return False
 
+    if executar_como_admin("msiexec.exe", ["/i", str(msi), "/passive", "/norestart"], mostrar=True) is None:
+        return False                       # o usuário recusou a permissão
+    return winfsp_instalado()
+
+
+def executar_como_admin(programa: str, argumentos: list, mostrar=False):
+    """Roda um programa pedindo a permissão de administrador (UAC) e espera terminar. Devolve o código de saída,
+    ou None se o usuário recusou."""
     class INFO(ctypes.Structure):
         _fields_ = [("cbSize", ctypes.c_ulong), ("fMask", ctypes.c_ulong), ("hwnd", ctypes.c_void_p),
                     ("lpVerb", ctypes.c_wchar_p), ("lpFile", ctypes.c_wchar_p),
@@ -299,15 +307,19 @@ def instalar_winfsp() -> bool:
                     ("lpClass", ctypes.c_wchar_p), ("hkeyClass", ctypes.c_void_p), ("dwHotKey", ctypes.c_ulong),
                     ("hIcon", ctypes.c_void_p), ("hProcess", ctypes.c_void_p)]
 
+    os.environ["PYINSTALLER_RESET_ENVIRONMENT"] = "1"   # o .exe elevado não deve reaproveitar a pasta temporária deste
     info = INFO()
     info.cbSize = ctypes.sizeof(INFO)
     info.fMask = 0x40                      # SEE_MASK_NOCLOSEPROCESS: para esperar o fim
     info.lpVerb = "runas"                  # pede a permissão de administrador (UAC)
-    info.lpFile = "msiexec.exe"
-    info.lpParameters = f'/i "{msi}" /passive /norestart'
-    info.nShow = 1
+    info.lpFile = programa
+    info.lpParameters = subprocess.list2cmdline(argumentos)
+    info.nShow = 1 if mostrar else 0
     if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(info)):
-        return False                       # o usuário recusou a permissão
-    ctypes.windll.kernel32.WaitForSingleObject(info.hProcess, 0xFFFFFFFF)
-    ctypes.windll.kernel32.CloseHandle(info.hProcess)
-    return winfsp_instalado()
+        return None
+    k = ctypes.windll.kernel32
+    k.WaitForSingleObject(ctypes.c_void_p(info.hProcess), 0xFFFFFFFF)
+    codigo = ctypes.c_ulong(1)
+    k.GetExitCodeProcess(ctypes.c_void_p(info.hProcess), ctypes.byref(codigo))
+    k.CloseHandle(ctypes.c_void_p(info.hProcess))
+    return codigo.value

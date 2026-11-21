@@ -46,6 +46,17 @@ def tamanho_parte_bytes(dados: Path) -> int:
     return int(max(MIN_PARTE_MB, min(mb, MAX_PARTE_MB)) * 1024 * 1024)
 
 
+def letra_global_ativa(dados: Path) -> bool:
+    return bool(ler(dados).get("letra_global", False))
+
+
+def gravar_letra_global(dados: Path, ativa: bool):
+    cfg = ler(dados)
+    cfg["letra_global"] = bool(ativa)
+    Path(dados).mkdir(parents=True, exist_ok=True)
+    (Path(dados) / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+
 def interpretar_parte(texto: str) -> int:
     """'64' (em MB) -> MB. Vazio vale o padrão."""
     texto = texto.strip()
@@ -139,6 +150,7 @@ def abrir_janela(dados: Path) -> bool:
     texto_pausa = str(pausa_envios_s(dados)).replace(".", ",").removesuffix(",0")
     texto_parte = str(tamanho_parte_bytes(dados) // (1024 * 1024))
     inicio = sistema.inicio_ativo()
+    global_ativa = letra_global_ativa(dados)
     salvou = False
     while True:
         dlg = wx.Dialog(None, title="TeleCloud - Configurações",
@@ -178,6 +190,14 @@ def abrir_janela(dados: Path) -> bool:
         marca = wx.CheckBox(dlg, label="Iniciar o TeleCloud com o Windows")
         marca.SetValue(inicio)
         caixa.Add(marca, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        marca_global = wx.CheckBox(dlg, label="Mostrar a unidade também para programas executados como administrador")
+        marca_global.SetValue(global_ativa)
+        caixa.Add(marca_global, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        t4 = wx.StaticText(dlg, label=(
+            "Ao ligar, o Windows pede a permissão de administrador uma única vez, para instalar um pequeno "
+            "ajudante. Vale na próxima vez que o TeleCloud abrir."))
+        t4.Wrap(420)
+        caixa.Add(t4, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
         linha = wx.BoxSizer(wx.HORIZONTAL)
         ok = wx.Button(dlg, wx.ID_OK, "Salvar")
         cancelar = wx.Button(dlg, wx.ID_CANCEL, "Cancelar")
@@ -197,12 +217,19 @@ def abrir_janela(dados: Path) -> bool:
                 break
             texto_campo, texto_pausa, inicio = campo.GetValue(), campo_pausa.GetValue(), marca.GetValue()
             texto_parte = campo_parte.GetValue()
+            global_ativa = marca_global.GetValue()
         finally:
             dlg.Destroy()
         try:
             gb = interpretar_gb(texto_campo)
             pausa = interpretar_pausa(texto_pausa)
             parte = interpretar_parte(texto_parte)
+            if global_ativa:
+                from . import letraglobal
+                if not letraglobal.registrado() and not letraglobal.pedir_registro():
+                    raise ErroConfig("Não consegui instalar o ajudante. Você recusou a permissão de administrador? "
+                                     "Desmarque a opção para salvar o resto, ou tente de novo.")
+            gravar_letra_global(dados, global_ativa)
             gravar_cache_gb(dados, gb)
             gravar_pausa(dados, pausa)
             gravar_parte(dados, parte)

@@ -30,6 +30,8 @@ def _argumentos(argv):
     ap.add_argument("--sem-instalar", action="store_true", help="não oferecer a instalação")
     ap.add_argument("--configuracoes", action="store_true", help="abre a janela de configurações")
     ap.add_argument("--painel", action="store_true", help="abre o painel de controle")
+    ap.add_argument("--registrar-ajudante", metavar="SID", help="(interno, como administrador) instala o ajudante da letra global")
+    ap.add_argument("--remover-ajudante", action="store_true", help="(interno, como administrador) remove o ajudante da letra global")
     return ap.parse_args(argv)
 
 
@@ -113,6 +115,9 @@ def principal(argv=None):
         from .painel import abrir_painel
         abrir_painel(dados)
         return 0
+    if args.registrar_ajudante or args.remover_ajudante:
+        from . import letraglobal
+        return letraglobal.registrar(args.registrar_ajudante) if args.registrar_ajudante else letraglobal.remover_registro()
     if args.desinstalar:
         return _desinstalar()
     if args.iniciar_com_windows:
@@ -182,6 +187,19 @@ def principal(argv=None):
         _falha(f"Não foi possível criar a unidade {args.unidade}. Ela já está em uso?\n{e}", args)
         return 1
 
+    from . import letraglobal
+    from .configuracoes import letra_global_ativa
+    global_publicada = []
+
+    def publicar_global():
+        """Se a opção está ligada, torna a letra visível também para programas elevados (uma vez por execução)."""
+        if global_publicada or args.memoria or not letra_global_ativa(dados):
+            return
+        if letraglobal.publicar(args.unidade):
+            global_publicada.append(True)
+
+    threading.Thread(target=publicar_global, daemon=True).start()
+
     def encerrar():
         # Não espera a fila toda: o que está pendente fica no índice e no cache e volta à fila ao reabrir.
         # Espera só o arquivo que está sendo enviado agora (um pouco), para não deixar partes soltas no Telegram.
@@ -190,6 +208,7 @@ def principal(argv=None):
         while un.atual and time.time() < limite:
             time.sleep(0.2)
         un.salvar_indice_agora()
+        letraglobal.despublicar(args.unidade)
         fs.desmontar()
         un.parar()   # fecha os arquivos abertos, gravando no disco o que ainda estava em memória
         if not args.memoria:
@@ -249,6 +268,7 @@ def principal(argv=None):
         un.cache_max = cache_max_bytes(dados)   # vale já, sem reiniciar
         un.pausa_envios = pausa_envios_s(dados)
         nuvem.tamanho_parte = tamanho_parte_bytes(dados)
+        threading.Thread(target=publicar_global, daemon=True).start()   # opção recém-ligada
 
     bandeja = Bandeja(un, args.unidade, dados, sair, ao_configurar=reler_configuracoes,
                       ao_desconectar=None if args.memoria else desconectar)
@@ -371,6 +391,11 @@ def _desinstalar() -> int:
         "Apagar também os dados locais (login, índice e arquivos em cache)?\n\n"
         "Os arquivos guardados no Telegram NÃO são apagados. O índice fica salvo no grupo TeleCloud e "
         "permite recuperar tudo depois.")
+    from . import letraglobal
+    if letraglobal.registrado() and sistema.perguntar(
+            "Remover também o ajudante que mostra a unidade para programas como administrador?\n\n"
+            "O Windows vai pedir permissão de administrador."):
+        letraglobal.pedir_remocao()
     sistema.desinstalar(dados)
     sistema.aviso("TeleCloud removido. O driver WinFsp continua instalado (outros programas podem usá-lo); "
                   "remova-o em Configurações > Aplicativos se quiser.")
