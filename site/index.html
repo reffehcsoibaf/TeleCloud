@@ -144,9 +144,10 @@ footer { border-top: 1px solid var(--linha); margin-top: 3rem; padding: 1.5rem 0
       var melhor = null, chave = null;
       lista.forEach(function (r) {
         var v = String(r.tag_name || "").replace(/^[vV]/, "");
-        if (r.draft || !/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(v)) { return; }
+        if (r.draft || !/^\d{4}\.\d{1,2}\.\d{1,2}(\.\d{1,3})?$/.test(v)) { return; }
         var k = v.split(".").map(Number), maior = !chave;
-        for (var i = 0; chave && i < 3; i++) {
+        if (k.length < 4) { k.push(0); }   // 2026.11.9 vale 2026.11.9.0
+        for (var i = 0; chave && i < 4; i++) {
           if (k[i] !== chave[i]) { maior = k[i] > chave[i]; break; }
         }
         if (maior) { melhor = { v: v, r: r }; chave = k; }
