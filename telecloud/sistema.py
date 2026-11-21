@@ -132,6 +132,43 @@ def esperar_encerrar(limite: float) -> bool:
     return True
 
 
+PREFIXO_ATUALIZACAO = "TeleCloud-atualizacao-"   # pasta temporária onde o painel baixa a versão nova
+
+
+def _pasta_de_atualizacao(pasta: Path) -> bool:
+    """True se `pasta` é uma pasta de download do atualizador, diretamente dentro do Temp."""
+    import tempfile
+    try:
+        return (pasta.name.startswith(PREFIXO_ATUALIZACAO) and pasta.is_dir()
+                and pasta.resolve().parent == Path(tempfile.gettempdir()).resolve())
+    except OSError:
+        return False
+
+
+def apagar_download_proprio():
+    """Se este .exe é o baixado pelo atualizador, agenda a remoção da pasta dele (um .exe em uso não se apaga a
+    si mesmo: um cmd espera este processo terminar e remove a pasta)."""
+    if not empacotado():
+        return
+    pasta = Path(sys.executable).resolve().parent
+    if _pasta_de_atualizacao(pasta):
+        subprocess.Popen(
+            f'cmd /c ping -n 6 127.0.0.1 >nul & rmdir /s /q "{pasta}"',
+            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP, close_fds=True)
+
+
+def limpar_downloads_antigos(idade_min_s=600):
+    """Apaga pastas de atualização que sobraram no Temp (de atualizações antigas ou interrompidas). Ignora as
+    mais novas que `idade_min_s` (pode haver um download em andamento) e as que ainda estão em uso."""
+    import tempfile
+    try:
+        for p in Path(tempfile.gettempdir()).glob(PREFIXO_ATUALIZACAO + "*"):
+            if _pasta_de_atualizacao(p) and time.time() - p.stat().st_mtime > idade_min_s:
+                shutil.rmtree(p, ignore_errors=True)   # .exe em execução não se apaga: fica para a próxima vez
+    except OSError:
+        pass
+
+
 def instalado_em_disco() -> bool:
     return (pasta_instalacao() / "TeleCloud.exe").exists()
 

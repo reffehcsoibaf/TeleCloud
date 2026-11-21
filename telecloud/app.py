@@ -141,6 +141,8 @@ def principal(argv=None):
             abrir_painel(dados)
         return 0
 
+    threading.Thread(target=sistema.limpar_downloads_antigos, daemon=True).start()   # sobras de atualizações antigas
+
     if not sistema.winfsp_instalado() and not _garantir_winfsp():
         return 1
 
@@ -360,6 +362,7 @@ def _atualizar() -> bool:
         sistema.aviso(f"Não consegui atualizar o TeleCloud:\n{e}", erro=True)
         return True
     subprocess.Popen([str(exe)], close_fds=True)
+    sistema.apagar_download_proprio()   # este .exe veio do painel (pasta temporária): não deixa o download para trás
     return True
 
 
