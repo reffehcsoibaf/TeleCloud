@@ -104,9 +104,13 @@ fun TelaArquivos(nuvem: Nuvem) {
                 } else {
                     Text(
                         texto,
-                        modifier = mod.clickable(role = Role.Button, onClickLabel = "Baixar arquivo") {
-                            escolhido = no
-                            salvar.launch(no.nome)
+                        modifier = mod.clickable(role = Role.Button, onClickLabel = "Baixar para a pasta Download") {
+                            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                                nuvem.baixar(no)
+                            } else {
+                                escolhido = no
+                                salvar.launch(no.nome)
+                            }
                         },
                     )
                 }

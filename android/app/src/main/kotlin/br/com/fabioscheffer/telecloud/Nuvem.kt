@@ -5,6 +5,8 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,6 +23,35 @@ const val NOME_GRUPO = "TeleCloud"
 const val MARCA_INDICE = "#telecloud_indice"
 const val TAMANHO_PARTE = 64L * 1024 * 1024
 const val TOPICO_RAIZ = "(raiz)"
+
+/** Texto curto com o que mudou entre duas versões do índice; vazio se nada mudou. */
+fun descreverMudancas(antes: Map<String, Assinatura>, depois: Map<String, Assinatura>): String {
+    fun nome(c: String) = c.substringAfterLast('/')
+    fun pasta(c: String) = if ('/' in c) c.substringBeforeLast('/') else "TeleCloud"
+    val novos = (depois.keys - antes.keys).toMutableList()
+    val removidos = (antes.keys - depois.keys).toMutableList()
+    val linhas = ArrayList<String>()
+    // Mesmo nome e tamanho que sumiu de um lugar e apareceu em outro: foi movido.
+    for (r in removidos.toList()) {
+        val a = antes[r]!!
+        if (a.pasta) continue
+        val destino = novos.firstOrNull { n -> val d = depois[n]!!; !d.pasta && nome(n) == nome(r) && d.tamanho == a.tamanho }
+        if (destino != null) {
+            linhas += "${nome(r)} movido de ${pasta(r)} para ${pasta(destino)}"
+            removidos.remove(r)
+            novos.remove(destino)
+        }
+    }
+    for (n in novos.sorted()) linhas += if (depois[n]!!.pasta) "Nova pasta ${nome(n)}" else "Novo: ${nome(n)} em ${pasta(n)}"
+    for (r in removidos.sorted()) linhas += if (antes[r]!!.pasta) "Pasta ${nome(r)} removida" else "Removido: ${nome(r)} de ${pasta(r)}"
+    for ((c, d) in depois) {
+        val a = antes[c] ?: continue
+        if (!d.pasta && (a.tamanho != d.tamanho || a.modificado != d.modificado)) linhas += "Alterado: ${nome(c)}"
+    }
+    if (linhas.isEmpty()) return ""
+    val extra = linhas.size - 4
+    return linhas.take(4).joinToString(". ") + if (extra > 0) ". E mais $extra mudança(s)" else ""
+}
 
 data class EstadoNuvem(
     val carregando: Boolean = false,
@@ -51,6 +82,18 @@ class Nuvem(private val td: Td, private val ctx: Context) {
             ) {
                 atualizar(automatico = m.id)
             }
+        }
+    }
+
+    private val ativas = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** Executa uma transferência com o serviço em primeiro plano ligado (notificação) enquanto durar. */
+    private suspend fun <T> emSegundoPlano(bloco: suspend () -> T): T {
+        if (ativas.incrementAndGet() == 1) TransferenciaService.iniciar(ctx)
+        try {
+            return bloco()
+        } finally {
+            if (ativas.decrementAndGet() == 0) TransferenciaService.parar(ctx)
         }
     }
 
@@ -101,6 +144,7 @@ class Nuvem(private val td: Td, private val ctx: Context) {
                 val antes = _estado.value.caminho
                 _estado.value = _estado.value.copy(carregando = true, erro = null)
                 try {
+                    val mapaAntes = withContext(Dispatchers.IO) { indice?.mapa() }
                     indice?.fechar()
                     indice = null
                     val idx = baixarIndice()
@@ -113,8 +157,13 @@ class Nuvem(private val td: Td, private val ctx: Context) {
                     _estado.value = EstadoNuvem(
                         caminho = caminho, itens = idx.listar(caminho.lastOrNull()?.id ?: RAIZ), pronto = true,
                     )
-                    _transferencia.value =
-                        if (automatico != 0L) "A lista foi atualizada com novidades do computador." else "Lista atualizada."
+                    val mudancas = if (mapaAntes == null) "" else descreverMudancas(mapaAntes, withContext(Dispatchers.IO) { idx.mapa() })
+                    // Só anuncia o que de fato mudou; atualização automática sem mudança fica em silêncio.
+                    if (mudancas.isNotEmpty()) {
+                        _transferencia.value = "Novidades do computador: $mudancas"
+                    } else if (automatico == 0L) {
+                        _transferencia.value = "Lista atualizada. Sem mudanças."
+                    }
                 } catch (e: Exception) {
                     Registro.erro(ctx, "atualizar índice", e)
                     // Mantém a lista que já estava na tela; só avisa. O índice antigo foi fechado: reabre.
@@ -142,39 +191,96 @@ class Nuvem(private val td: Td, private val ctx: Context) {
 
     // ---------- download ----------
 
-    /** Baixa as partes do arquivo, em ordem, direto para o destino escolhido pelo usuário. */
-    fun baixar(no: No, destino: Uri) {
+    /**
+     * Baixa as partes do arquivo, em ordem. Sem [destino], grava na pasta Download do aparelho (Android 10+) como
+     * arquivo "pendente": só aparece para o usuário quando estiver completo, então nunca sobra um arquivo de 0 B
+     * nem um arquivo pela metade. Com [destino] (Android 9 ou menos), grava no local escolhido no seletor.
+     */
+    fun baixar(no: No, destino: Uri? = null) {
         val idx = indice ?: return
         escopo.launch {
-            trava.withLock {
+            emSegundoPlano { trava.withLock {
+                var alvo: Uri? = destino
+                val pendente = destino == null
                 try {
                     val partes = idx.partes(no.id)
                     if (partes.isEmpty()) throw IllegalStateException("O índice não tem partes para este arquivo.")
-                    ctx.contentResolver.openOutputStream(destino, "w").use { saida ->
-                        if (saida == null) throw IllegalStateException("Não foi possível gravar no destino escolhido.")
+                    val resolver = ctx.contentResolver
+                    if (alvo == null) alvo = criarEmDownloads(no.nome)
+                    resolver.openOutputStream(alvo, "w").use { saida ->
+                        if (saida == null) throw IllegalStateException("Não foi possível gravar no destino.")
                         partes.forEachIndexed { i, p ->
-                            _transferencia.value = "Baixando ${no.nome}: parte ${i + 1} de ${partes.size}"
+                            val rotulo = "Baixando ${no.nome}" + if (partes.size > 1) ", parte ${i + 1} de ${partes.size}" else ""
+                            _transferencia.value = rotulo
                             val msg = td.chamar(TdApi.GetMessage(grupo, idDaTdlib(p.ref)))
                             val c = msg.content as? TdApi.MessageDocument
                                 ?: throw IllegalStateException("A mensagem da parte ${i + 1} não tem arquivo.")
-                            val f = td.chamar(TdApi.DownloadFile(c.document.document.id, 32, 0, 0, true))
-                            if (!f.local.isDownloadingCompleted) {
-                                throw IllegalStateException("Download da parte ${i + 1} incompleto.")
-                            }
+                            val arquivo = c.document.document
+                            val f = baixarAcompanhando(arquivo.id, rotulo)
                             File(f.local.path).inputStream().use { it.copyTo(saida) }
                             // Libera o espaço do cache da TDLib: o conteúdo já está no destino.
                             runCatching { td.chamar(TdApi.DeleteFile(f.id)) }
                         }
                     }
-                    _transferencia.value = "${no.nome} baixado."
+                    if (pendente) liberarDownload(alvo!!)
+                    _transferencia.value = "${no.nome} baixado" + if (pendente) " na pasta Download." else "."
                 } catch (e: Exception) {
                     Registro.erro(ctx, "baixar ${no.nome} (no ${no.id})", e)
-                    // O seletor já criou o arquivo vazio no destino; não deixar a sobra de 0 B.
-                    runCatching { android.provider.DocumentsContract.deleteDocument(ctx.contentResolver, destino) }
+                    // Não deixar sobra: apaga o arquivo vazio ou incompleto do destino.
+                    alvo?.let { u ->
+                        runCatching { if (pendente) ctx.contentResolver.delete(u, null, null)
+                        else android.provider.DocumentsContract.deleteDocument(ctx.contentResolver, u) }
+                    }
                     _transferencia.value = "Erro ao baixar ${no.nome}: ${e.message ?: e}"
+                }
+            } }
+        }
+    }
+
+    /** Baixa uma parte pela TDLib e vai anunciando o percentual (de 10 em 10 %), na tela e na notificação. */
+    private suspend fun baixarAcompanhando(fileId: Int, rotulo: String): TdApi.File = coroutineScope {
+        val vigia = launch {
+            var ultimo = -1
+            while (true) {
+                delay(1000)
+                val f = runCatching { td.chamar(TdApi.GetFile(fileId)) }.getOrNull() ?: continue
+                val total = if (f.size > 0) f.size else f.expectedSize
+                if (total > 0) {
+                    val pct = (f.local.downloadedSize * 100 / total).toInt() / 10 * 10
+                    if (pct != ultimo) {
+                        ultimo = pct
+                        _transferencia.value = "$rotulo: $pct%"
+                    }
                 }
             }
         }
+        try {
+            val f = td.chamar(TdApi.DownloadFile(fileId, 32, 0, 0, true))
+            if (!f.local.isDownloadingCompleted) throw IllegalStateException("Download incompleto.")
+            f
+        } finally {
+            vigia.cancel()
+        }
+    }
+
+    /** Cria na pasta Download um arquivo "pendente" (invisível até [liberarDownload]). */
+    private fun criarEmDownloads(nome: String): Uri {
+        if (android.os.Build.VERSION.SDK_INT < 29) throw IllegalStateException("Escolha o destino do arquivo.")
+        val ext = nome.substringAfterLast('.', "").lowercase()
+        val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+        val valores = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, nome)
+            put(android.provider.MediaStore.Downloads.MIME_TYPE, mime)
+            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+            put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+        }
+        return ctx.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, valores)
+            ?: throw IllegalStateException("Não consegui criar o arquivo na pasta Download.")
+    }
+
+    private fun liberarDownload(uri: Uri) {
+        val v = android.content.ContentValues().apply { put(android.provider.MediaStore.Downloads.IS_PENDING, 0) }
+        ctx.contentResolver.update(uri, v, null, null)
     }
 
     // ---------- envio ----------
@@ -183,7 +289,7 @@ class Nuvem(private val td: Td, private val ctx: Context) {
     fun enviar(uris: List<Uri>) {
         val pastaAtual = _estado.value.caminho
         escopo.launch {
-            trava.withLock {
+            emSegundoPlano { trava.withLock {
                 for (uri in uris) {
                     val (nome, tamanho) = nomeETamanho(uri)
                     try {
@@ -195,7 +301,7 @@ class Nuvem(private val td: Td, private val ctx: Context) {
                         break
                     }
                 }
-            }
+            } }
         }
     }
 
@@ -348,7 +454,7 @@ class Nuvem(private val td: Td, private val ctx: Context) {
 
     /** Mensagens de índice do grupo. A busca por texto demora minutos para enxergar mensagens novas; a lista de
      *  documentos do tópico geral enxerga na hora. Junta as duas (a mais nova vale). */
-    private suspend fun indicesNoGrupo(): List<TdApi.Message> {
+    private suspend fun indicesNoGrupo(rapido: Boolean = false): List<TdApi.Message> {
         val achados = HashMap<Long, TdApi.Message>()
         fun guardar(l: Array<TdApi.Message>) {
             for (m in l) {
@@ -361,7 +467,7 @@ class Nuvem(private val td: Td, private val ctx: Context) {
                 TdApi.SearchChatMessages(grupo, TdApi.MessageTopicForum(1), "", null, 0, 0, 100, TdApi.SearchMessagesFilterDocument()),
             ).messages,
         )
-        runCatching {
+        if (!rapido) runCatching {
             guardar(td.chamar(TdApi.SearchChatMessages(grupo, null, MARCA_INDICE, null, 0, 0, 50, null)).messages)
         }
         return achados.values.sortedByDescending { it.id }
@@ -369,16 +475,16 @@ class Nuvem(private val td: Td, private val ctx: Context) {
 
     private var vigia: kotlinx.coroutines.Job? = null
 
-    /** Confere o grupo a cada 30 s: se o PC publicou um índice novo, atualiza a lista (o aviso em tempo real
+    /** Confere o grupo a cada 10 s: se o PC publicou um índice novo, atualiza a lista (o aviso em tempo real
      *  do Telegram nem sempre chega ao app). */
     private fun vigiar() {
         if (vigia?.isActive == true) return
         vigia = escopo.launch {
             while (true) {
-                kotlinx.coroutines.delay(30_000)
+                kotlinx.coroutines.delay(10_000)
                 try {
                     if (indice == null || trava.isLocked || grupo == 0L) continue
-                    val m = indicesNoGrupo().firstOrNull() ?: continue
+                    val m = indicesNoGrupo(rapido = true).firstOrNull() ?: continue
                     if (m.id != indiceConhecido) atualizar(automatico = m.id)
                 } catch (_: Exception) {
                     // sem rede agora: tenta de novo na próxima volta

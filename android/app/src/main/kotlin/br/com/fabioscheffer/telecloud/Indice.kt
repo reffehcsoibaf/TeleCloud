@@ -13,6 +13,9 @@ data class No(val id: Long, val nome: String, val pasta: Boolean, val tamanho: L
 
 data class Parte(val seq: Int, val ref: String, val tamanho: Long)
 
+/** Assinatura de um item do índice para comparar duas versões (por caminho completo). */
+data class Assinatura(val pasta: Boolean, val tamanho: Long, val modificado: Long)
+
 /** Índice SQLite que o TeleCloud do Windows guarda no grupo do Telegram (tabelas `nos` e `partes`). */
 class Indice(private val arquivo: File) {
     private var bd = abrir()
@@ -31,6 +34,31 @@ class Indice(private val arquivo: File) {
             }
         }
         return r
+    }
+
+    /** Todos os itens do índice por caminho completo ("Backups/a.zip"), para descobrir o que mudou entre duas versões. */
+    fun mapa(): Map<String, Assinatura> {
+        class Linha(val pai: Long?, val nome: String, val a: Assinatura)
+        val linhas = HashMap<Long, Linha>()
+        bd.rawQuery("SELECT id, pai, nome, pasta, tamanho, modificado FROM nos", null).use { c ->
+            while (c.moveToNext()) {
+                linhas[c.getLong(0)] = Linha(
+                    if (c.isNull(1)) null else c.getLong(1), c.getString(2),
+                    Assinatura(c.getInt(3) != 0, c.getLong(4), c.getDouble(5).toLong()),
+                )
+            }
+        }
+        val caminhos = HashMap<Long, String>()
+        fun caminho(id: Long): String {
+            caminhos[id]?.let { return it }
+            val n = linhas[id] ?: return ""
+            val r = if (n.pai == null) "" else if (n.pai == RAIZ) n.nome else caminho(n.pai) + "/" + n.nome
+            caminhos[id] = r
+            return r
+        }
+        val saida = HashMap<String, Assinatura>()
+        for ((id, n) in linhas) if (n.pai != null) saida[caminho(id)] = n.a
+        return saida
     }
 
     fun existe(id: Long): Boolean =
