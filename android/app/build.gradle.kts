@@ -14,8 +14,8 @@ android {
         applicationId = "br.com.fabioscheffer.telecloud"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26112200
-        versionName = "2026.11.22.0"
+        versionCode = 26112201
+        versionName = "2026.11.22.1"
         // Só arquiteturas de celulares reais (a TDLib é grande); emulador x86 não é alvo.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
 

@@ -7,6 +7,8 @@ Para lançar: descreva o que mudou em "Não lançado" e rode `ferramentas\lancar
 
 ## Não lançado
 
+## 2026.11.22.1 — 2026-11-22
+
 ### Windows
 - Corrigido: o cache em disco passava do limite e o botão "Limpar o cache do disco" não apagava nada. As cópias
   mantidas de sessões anteriores nunca eram consideradas na limpeza; agora são (as mais antigas primeiro), e as de
