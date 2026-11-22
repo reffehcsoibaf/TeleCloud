@@ -30,6 +30,7 @@ def _argumentos(argv):
     ap.add_argument("--sem-instalar", action="store_true", help="não oferecer a instalação")
     ap.add_argument("--configuracoes", action="store_true", help="abre a janela de configurações")
     ap.add_argument("--painel", action="store_true", help="abre o painel de controle")
+    ap.add_argument("--exportar-chaves", action="store_true", help="salva o arquivo de chaves para importar no celular")
     ap.add_argument("--registrar-ajudante", metavar="SID", help="(interno, como administrador) instala o ajudante da letra global")
     ap.add_argument("--remover-ajudante", action="store_true", help="(interno, como administrador) remove o ajudante da letra global")
     return ap.parse_args(argv)
@@ -110,6 +111,10 @@ def principal(argv=None):
     if args.configuracoes:
         from .configuracoes import abrir_janela
         abrir_janela(dados)
+        return 0
+    if args.exportar_chaves:
+        from .configuracoes import abrir_exportacao
+        abrir_exportacao(dados)
         return 0
     if args.painel:
         from .painel import abrir_painel

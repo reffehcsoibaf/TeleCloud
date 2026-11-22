@@ -64,3 +64,22 @@ def test_tamanho_da_parte(tmp_path):
     assert tamanho_parte_bytes(tmp_path) == 16 * 1024 * 1024
     (tmp_path / "config.json").write_text('{"tamanho_parte_mb": 99999}')
     assert tamanho_parte_bytes(tmp_path) == 512 * 1024 * 1024   # limitado
+
+
+def test_exportar_chaves_gera_so_as_duas_chaves(tmp_path):
+    import json
+    from telecloud import configuracoes as c
+    (tmp_path / "config.json").write_text(json.dumps(
+        {"api_id": 12345, "api_hash": "abcdef0123456789", "grupo_id": 99, "topicos": {"x": 1}}), encoding="utf-8")
+    assert json.loads(c.conteudo_chaves(tmp_path)) == {"api_id": 12345, "api_hash": "abcdef0123456789"}
+    destino = tmp_path / c.NOME_ARQUIVO_CHAVES
+    c.exportar_chaves(tmp_path, destino)
+    assert json.loads(destino.read_text(encoding="utf-8")) == {"api_id": 12345, "api_hash": "abcdef0123456789"}
+
+
+def test_exportar_chaves_sem_chaves_avisa(tmp_path):
+    import pytest
+    from telecloud import configuracoes as c
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(c.ErroConfig):
+        c.conteudo_chaves(tmp_path)

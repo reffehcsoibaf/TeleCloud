@@ -138,6 +138,84 @@ def _gb_texto(mb: float) -> str:
     return (f"{gb:.2f}".rstrip("0").rstrip(".")).replace(".", ",")
 
 
+NOME_ARQUIVO_CHAVES = "telecloud-config.json"
+
+
+def conteudo_chaves(dados: Path) -> str:
+    """JSON com só as chaves api_id e api_hash, no formato que o app Android importa."""
+    cfg = ler(dados)
+    api_id, api_hash = cfg.get("api_id"), cfg.get("api_hash")
+    if not api_id or not api_hash:
+        raise ErroConfig("Ainda não há chaves guardadas. Entre na conta do Telegram pelo TeleCloud primeiro.")
+    return json.dumps({"api_id": int(api_id), "api_hash": str(api_hash)})
+
+
+def exportar_chaves(dados: Path, destino: Path):
+    """Grava em `destino` o arquivo de chaves para importar no celular."""
+    Path(destino).write_text(conteudo_chaves(dados), encoding="utf-8")
+
+
+def abrir_exportacao(dados: Path) -> bool:
+    """Pergunta onde salvar o arquivo de chaves para o celular. Devolve True se o arquivo foi gravado."""
+    import wx
+    from .login import _para_frente
+
+    app = wx.App(False)
+    # Janelinha invisível só para os diálogos nascerem na frente (senão o Windows os abre atrás).
+    quadro = wx.Frame(None, title="TeleCloud", style=wx.STAY_ON_TOP)
+    quadro.Show()
+    _para_frente(quadro)
+    gravou = False
+    try:
+        try:
+            conteudo_chaves(dados)
+        except ErroConfig as e:
+            wx.MessageBox(str(e), "TeleCloud - Exportar chaves", wx.OK | wx.ICON_WARNING, quadro)
+            return False
+        pergunta = wx.MessageDialog(
+            quadro,
+            "Isto grava um arquivo com as chaves do Telegram (api_id e api_hash) deste TeleCloud. No celular, "
+            "o app TeleCloud as importa e você não precisa digitá-las.\n\n"
+            "O arquivo não contém sua senha nem sua sessão: o login no celular é feito à parte. "
+            "Mesmo assim, apague-o do computador e do celular depois de importar.\n\nSalvar o arquivo agora?",
+            "TeleCloud - Exportar chaves para o celular", wx.YES_NO | wx.ICON_QUESTION)
+        pergunta.SetYesNoLabels("Salvar", "Cancelar")
+        try:
+            wx.CallAfter(_para_frente, pergunta)
+            if pergunta.ShowModal() != wx.ID_YES:
+                return False
+        finally:
+            pergunta.Destroy()
+        pasta = Path.home() / "Downloads"
+        escolha = wx.FileDialog(
+            quadro, "Onde salvar o arquivo de chaves", defaultDir=str(pasta if pasta.exists() else Path.home()),
+            defaultFile=NOME_ARQUIVO_CHAVES, wildcard="Arquivo JSON (*.json)|*.json",
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT)
+        try:
+            if escolha.ShowModal() != wx.ID_OK:
+                return False
+            destino = Path(escolha.GetPath())
+        finally:
+            escolha.Destroy()
+        try:
+            exportar_chaves(dados, destino)
+        except Exception as e:
+            log.exception("exportar chaves")
+            wx.MessageBox(f"Não consegui gravar o arquivo:\n{e}", "TeleCloud - Exportar chaves",
+                          wx.OK | wx.ICON_ERROR, quadro)
+            return False
+        gravou = True
+        wx.MessageBox(
+            f"Arquivo salvo em:\n{destino}\n\n"
+            "Agora copie-o para a pasta Download do celular (cabo USB ou outro jeito) e, no app TeleCloud do "
+            "celular, toque em \"Importar o arquivo de chaves\". Depois apague o arquivo do computador.",
+            "TeleCloud - Exportar chaves", wx.OK | wx.ICON_INFORMATION, quadro)
+        return True
+    finally:
+        quadro.Destroy()
+        app.Destroy()
+
+
 def abrir_janela(dados: Path) -> bool:
     """Mostra as configurações. Devolve True se o usuário salvou."""
     import wx

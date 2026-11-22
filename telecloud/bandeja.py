@@ -112,6 +112,7 @@ class Bandeja:
             pystray.MenuItem("Buscar novidades do celular no Telegram", self._buscar_novidades),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Configurações...", self._configuracoes),
+            pystray.MenuItem("Exportar as chaves para o celular...", self._exportar_chaves),
             *([pystray.MenuItem("Desconectar a conta do Telegram...", self._desconectar)]
               if self.ao_desconectar else []),
             pystray.MenuItem("Iniciar com o Windows", self._alternar_inicio,
@@ -153,6 +154,12 @@ class Bandeja:
             ok = self.un.salvar_indice_agora()
             self.avisar("Índice guardado no Telegram." if ok else "Não foi possível guardar o índice agora.")
         threading.Thread(target=f, daemon=True).start()
+
+    def _exportar_chaves(self, *_):
+        """Abre, num processo à parte, a janela que salva o arquivo de chaves para o app do celular."""
+        import subprocess
+        env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
+        subprocess.Popen(self._comando("--exportar-chaves"), env=env, close_fds=True)
 
     def _configuracoes(self, *_):
         """Abre a janela num processo à parte (wx e bandeja não convivem no mesmo) e relê o config ao fechar."""
