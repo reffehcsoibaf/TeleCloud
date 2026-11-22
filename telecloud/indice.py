@@ -219,6 +219,68 @@ class Indice:
         with open(caminho, "wb") as f:
             f.write(zlib.decompress(copia))
 
+    def mesclar(self, copia: bytes, desde: float = 0.0) -> tuple[int, list[str]]:
+        """Incorpora ao índice local o que existe só na cópia remota (feita por outro aparelho, como o celular).
+
+        A comparação é por caminho (os números dos nós divergem entre aparelhos). Só entra o que for novo ou
+        mais recente que `desde` (menos 5 min de folga entre os relógios): assim, o que o PC apagou depois da
+        última sincronização não ressuscita só porque a cópia do celular ainda o tinha. Arquivo que existe nos
+        dois lados com partes diferentes fica com a versão mais recente.
+        Devolve (quantos itens mudaram, referências de partes antigas que já podem ser apagadas do Telegram)."""
+        import zlib
+        remoto = sqlite3.connect(":memory:")
+        try:
+            remoto.deserialize(zlib.decompress(copia))
+            nos = list(remoto.execute("SELECT id,pai,nome,pasta,tamanho,modificado,tags FROM nos"))
+            partes: dict[int, list[Parte]] = {}
+            for no, seq, ref, tam in remoto.execute("SELECT no,seq,ref,tamanho FROM partes ORDER BY no,seq"):
+                partes.setdefault(no, []).append(Parte(seq, ref, tam))
+        finally:
+            remoto.close()
+        filhos: dict[int, list] = {}
+        for n in nos:
+            if n[1] is not None:
+                filhos.setdefault(n[1], []).append(n)
+        margem = desde - 300
+        mudou, antigas = 0, []
+        with self._trava:
+            fila = [(RAIZ, RAIZ)]  # (id remoto, id local)
+            while fila:
+                rid, lid = fila.pop()
+                locais = {x.nome.casefold(): x for x in self.listar(lid)}
+                for r in sorted(filhos.get(rid, []), key=lambda x: x[0]):
+                    _, _, nome, pasta, tam, modif, tags = r
+                    loc = locais.get(nome.casefold())
+                    if pasta:
+                        if loc is None:
+                            if modif < margem:
+                                continue
+                            loc = self.criar(lid, nome, True)
+                            mudou += 1
+                        elif not loc.pasta:
+                            continue
+                        fila.append((r[0], loc.id))
+                        continue
+                    ps = partes.get(r[0])
+                    if not ps:
+                        continue
+                    if loc is None:
+                        if modif < margem:
+                            continue
+                        loc = self.criar(lid, nome, False, tam)
+                    elif loc.pasta or modif <= loc.modificado + 1:
+                        continue
+                    else:
+                        atuais = self.partes(loc.id)
+                        if not atuais or [p.ref for p in atuais] == [p.ref for p in ps]:
+                            continue  # sem partes = envio ainda pendente; iguais = nada a fazer
+                        antigas += [p.ref for p in atuais]
+                    self.definir_partes(loc.id, ps, tam)
+                    self.bd.execute("UPDATE nos SET modificado=?, tags=? WHERE id=?", (modif, tags, loc.id))
+                    self.bd.commit()
+                    mudou += 1
+        return mudou, antigas
+
     def fechar(self):
         self.bd.close()
 

@@ -135,6 +135,15 @@ class Unidade:
         self._ultimo_visto_mudanca = self.ix.mudancas
         self._tentou_indice = 0.0
         self._ultima_limpeza = 0.0
+        # Sincronização do índice com outros aparelhos (o celular grava no mesmo índice do grupo).
+        self._arq_sincronia = self.cache_dir.parent / "sincronia.json"
+        self._ultima_sincronia = self._ler_sincronia()
+        self._indice_id = None          # id da cópia remota já incorporada ou publicada por este PC
+        self._checou_indice = 0.0
+        try:   # o Telegram avisa na hora quando outro aparelho publica o índice: sincroniza sem esperar os 2 min
+            self.nuvem.arm.observar_indice(self._indice_novo_no_grupo)
+        except Exception:
+            log.exception("não consegui acompanhar o índice do grupo em tempo real")
 
         pend = set(self.ix.pendentes_de_envio())
         # cache de arquivos já enviados não é confiável após reiniciar (partes em memória): limpa
@@ -259,6 +268,37 @@ class Unidade:
         except OSError:
             log.exception("não consegui guardar a pausa do Telegram")
 
+    def _indice_novo_no_grupo(self):
+        self._checou_indice = 0.0   # a próxima tarefa ociosa (menos de 1 s) confere o grupo
+
+    def _ler_sincronia(self) -> float:
+        try:
+            return float(json.loads(self._arq_sincronia.read_text(encoding="utf-8")).get("em", 0))
+        except (OSError, ValueError, TypeError, AttributeError):
+            return 0.0
+
+    def _marcar_sincronia(self):
+        self._ultima_sincronia = time.time()
+        try:
+            self._arq_sincronia.write_text(json.dumps({"em": self._ultima_sincronia}), encoding="utf-8")
+        except OSError:
+            log.exception("não consegui guardar a data da sincronização do índice")
+
+    def sincronizar_indice(self) -> int:
+        """Incorpora ao índice local o que outro aparelho (o celular) gravou no índice guardado no Telegram.
+        Devolve quantos itens mudaram. Erros de rede sobem como exceção."""
+        id_, copia = self.nuvem.arm.indice_remoto(self._indice_id)
+        if id_ is None or copia is None:
+            return 0
+        mudou, antigas = self.ix.mesclar(copia, self._ultima_sincronia)
+        self._indice_id = id_
+        self._marcar_sincronia()
+        if antigas:
+            self._apagar_remoto(antigas)
+        if mudou:
+            log.info("índice: %d item(ns) incorporado(s) de outro aparelho", mudou)
+        return mudou
+
     def _trabalhar(self):
         while not self._parar:
             if self.pausa_ate > time.time():   # o Telegram pediu para esperar: nem tenta antes disso
@@ -310,6 +350,12 @@ class Unidade:
 
     def _tarefas_ociosas(self):
         agora = time.time()
+        if agora - self._checou_indice > 120:
+            self._checou_indice = agora
+            try:
+                self.sincronizar_indice()
+            except Exception:
+                log.exception("não consegui conferir o índice guardado no Telegram")
         if self.ix.mudancas != self._visto and not self._mudou_em_recente(agora):
             if agora - self._tentou_indice > 60:
                 self.salvar_indice_agora()
@@ -330,9 +376,12 @@ class Unidade:
     def salvar_indice_agora(self) -> bool:
         """Guarda uma cópia do índice no armazenamento remoto (para recuperar em outro computador)."""
         self._tentou_indice = time.time()
-        alvo = self.ix.mudancas
         try:
-            self.nuvem.arm.salvar_indice(self.ix.exportar())
+            # Antes de publicar, incorpora o que outro aparelho gravou; senão a cópia dele seria apagada.
+            self.sincronizar_indice()
+            alvo = self.ix.mudancas
+            self._indice_id = self.nuvem.arm.salvar_indice(self.ix.exportar())
+            self._marcar_sincronia()
         except Exception:
             log.exception("não consegui guardar o índice")
             return False

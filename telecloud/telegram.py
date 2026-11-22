@@ -5,8 +5,8 @@ import json
 import threading
 from pathlib import Path
 
-from telethon import TelegramClient, functions
-from telethon.tl.types import PeerChannel
+from telethon import TelegramClient, events, functions
+from telethon.tl.types import InputMessagesFilterDocument, PeerChannel
 
 from .armazenamento import Armazenamento
 
@@ -139,19 +139,60 @@ class TelegramArmazenamento(Armazenamento):
             arq.name = "indice.db.z"
             nova = await self.client.send_file(
                 self.grupo, arq, caption=MARCA_INDICE, force_document=True, file_name="indice.db.z")
-            velhas = [m.id async for m in self.client.iter_messages(
-                self.grupo, search=MARCA_INDICE, limit=50)
-                if m.id != nova.id and (m.message or "").strip() == MARCA_INDICE]
+            velhas = [m.id for m in await self._msgs_indice() if m.id != nova.id]
             if velhas:
                 await self.client.delete_messages(self.grupo, velhas)
+            return nova.id
+        return self._rodar(f())
+
+    def observar_indice(self, aviso):
+        """Chama `aviso()` assim que chega ao grupo uma nova cópia do índice (publicada por outro aparelho)."""
+        async def f():
+            async def h(evento):
+                if (evento.raw_text or "").strip() == MARCA_INDICE:
+                    try:
+                        aviso()
+                    except Exception:
+                        pass
+            self.client.add_event_handler(h, events.NewMessage(chats=self.grupo))
         self._rodar(f())
+
+    async def _msgs_indice(self):
+        """Cópias do índice no grupo, da mais nova para a mais antiga. A busca por texto do Telegram demora
+        alguns minutos para enxergar mensagens novas; por isso também lista os documentos do tópico geral
+        (onde o índice fica), que aparecem na hora. As duas listas se completam."""
+        achadas = {}
+
+        def eh_indice(m):
+            return bool(m.document) and (m.message or "").strip() == MARCA_INDICE
+        async for m in self.client.iter_messages(self.grupo, search=MARCA_INDICE, limit=50):
+            if eh_indice(m):
+                achadas[m.id] = m
+        try:
+            async for m in self.client.iter_messages(
+                    self.grupo, reply_to=1, filter=InputMessagesFilterDocument, limit=50):
+                if eh_indice(m):
+                    achadas[m.id] = m
+        except Exception:
+            pass
+        return [achadas[i] for i in sorted(achadas, reverse=True)]
+
+    def indice_remoto(self, conhecido=None):
+        """(id da mensagem, cópia) do índice mais recente no grupo; cópia None se o id já for o conhecido."""
+        async def f():
+            msgs = await self._msgs_indice()
+            if not msgs:
+                return None, None
+            m = msgs[0]
+            if m.id == conhecido:
+                return m.id, None
+            return m.id, await self.client.download_media(m, file=bytes)
+        return self._rodar(f())
 
     def carregar_indice(self):
         async def f():
-            async for m in self.client.iter_messages(self.grupo, search=MARCA_INDICE, limit=20):
-                if (m.message or "").strip() == MARCA_INDICE and m.document:
-                    return await self.client.download_media(m, file=bytes)
-            return None
+            msgs = await self._msgs_indice()
+            return await self.client.download_media(msgs[0], file=bytes) if msgs else None
         return self._rodar(f())
 
     def desconectar_conta(self):

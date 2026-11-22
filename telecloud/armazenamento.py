@@ -16,12 +16,22 @@ class Armazenamento(ABC):
     def garantir_pasta(self, caminho: str) -> None:
         """Cria o tópico/lugar correspondente a uma pasta de primeiro nível (opcional)."""
 
-    def salvar_indice(self, copia: bytes) -> None:
-        """Guarda a cópia do índice (substituindo a anterior), para recuperar em outro computador."""
+    def salvar_indice(self, copia: bytes):
+        """Guarda a cópia do índice (substituindo a anterior), para recuperar em outro computador.
+        Devolve um identificador da cópia guardada (ou None)."""
+        return None
 
     def carregar_indice(self) -> bytes | None:
         """Devolve a última cópia guardada do índice, ou None se não houver."""
         return None
+
+    def observar_indice(self, aviso) -> None:
+        """Chama `aviso()` quando outra cópia do índice for guardada por outro aparelho (opcional)."""
+
+    def indice_remoto(self, conhecido=None):
+        """(identificador, cópia) da cópia mais recente do índice guardada. Se o identificador for igual a
+        `conhecido`, a cópia vem None (nada novo para baixar). Sem cópia guardada: (None, None)."""
+        return None, None
 
 
 class ArmazenamentoMemoria(Armazenamento):
@@ -33,9 +43,17 @@ class ArmazenamentoMemoria(Armazenamento):
 
     def salvar_indice(self, copia):
         self.copia_indice = bytes(copia)
+        self.id_indice = getattr(self, "id_indice", 0) + 1
+        return self.id_indice
 
     def carregar_indice(self):
         return self.copia_indice
+
+    def indice_remoto(self, conhecido=None):
+        if self.copia_indice is None:
+            return None, None
+        i = getattr(self, "id_indice", 0)
+        return i, (None if i == conhecido else self.copia_indice)
 
     def enviar(self, pasta, nome, dados, legenda=""):
         self._n += 1

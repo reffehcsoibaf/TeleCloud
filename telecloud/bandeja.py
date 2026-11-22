@@ -109,6 +109,7 @@ class Bandeja:
             pystray.MenuItem(cache, None, enabled=False),
             pystray.MenuItem(indice, None, enabled=False),
             pystray.MenuItem("Guardar o índice no Telegram agora", self._guardar_indice),
+            pystray.MenuItem("Buscar novidades do celular no Telegram", self._buscar_novidades),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Configurações...", self._configuracoes),
             *([pystray.MenuItem("Desconectar a conta do Telegram...", self._desconectar)]
@@ -136,6 +137,16 @@ class Bandeja:
 
     def _abrir_dados(self, *_):
         os.startfile(str(self.pasta_dados))
+
+    def _buscar_novidades(self, *_):
+        def f():
+            try:
+                n = self.un.sincronizar_indice()
+            except Exception:
+                self.avisar("Não foi possível consultar o Telegram agora.")
+                return
+            self.avisar(f"{n} item(ns) novo(s) trazido(s) do Telegram." if n else "Nada de novo no Telegram.")
+        threading.Thread(target=f, daemon=True).start()
 
     def _guardar_indice(self, *_):
         def f():
