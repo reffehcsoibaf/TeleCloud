@@ -240,7 +240,7 @@ def principal(argv=None):
         pendentes = len(s["esperando"]) + (1 if s["enviando"] else 0) + s["apagando"]
         if pendentes:
             sistema.aviso(f"Ainda há {pendentes} item(ns) esperando envio ao Telegram. Desconectar agora os perderia. "
-                          "Espere a fila terminar (veja o menu da bandeja) e tente de novo.", erro=True)
+                          "Espere a fila terminar (veja o painel de controle) e tente de novo.", erro=True)
             return
         if not sistema.perguntar(
                 "Desconectar a conta do Telegram?\n\nOs arquivos continuam guardados no Telegram. O TeleCloud vai "
@@ -302,13 +302,25 @@ def principal(argv=None):
                     bandeja.avisar("Não consegui limpar o cache. Veja o registro do TeleCloud.")
         threading.Thread(target=esperar_limpar_cache, daemon=True).start()
 
+        def atender(nome, acao):
+            """Pedidos do painel de controle que rodam aqui, no programa que tem a unidade montada."""
+            evento = sistema.criar_evento_de_pedido(nome)
+
+            def laco():
+                while True:
+                    sistema.esperar_pedido_sair(evento)
+                    acao()
+            threading.Thread(target=laco, daemon=True).start()
+        atender(sistema.EVENTO_GUARDAR_INDICE, bandeja._guardar_indice)
+        atender(sistema.EVENTO_BUSCAR_NOVIDADES, bandeja._buscar_novidades)
+
         def esperar_desconectar():
             while True:
                 sistema.esperar_pedido_sair(evento_desc)
                 desconectar()
         threading.Thread(target=esperar_desconectar, daemon=True).start()
     bandeja.executar(ao_pronto=lambda: bandeja.avisar(
-        f"Unidade {args.unidade} pronta. Use o ícone perto do relógio para ver os envios."))
+        f"Unidade {args.unidade} pronta. Abra o painel de controle pelo ícone perto do relógio para ver os envios."))
     if reabrir_depois:
         _reabrir(argv)
     return 0

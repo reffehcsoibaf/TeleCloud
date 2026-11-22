@@ -418,6 +418,28 @@ class Unidade:
                 pass
         return total
 
+    def _adotar_cache_do_disco(self):
+        """Cópias de sessões anteriores (mantidas ao reiniciar) só entram em self.estados quando alguém abre o
+        arquivo; sem isto a limpeza nunca as via e o disco passava do limite. Aqui elas entram na lista (com a
+        data do arquivo como último acesso) e as de arquivos que não existem mais são apagadas."""
+        pend = set(self.ix.pendentes_de_envio())
+        for f in list(self.cache_dir.glob("*.bin")):
+            try:
+                i = int(f.stem)
+            except ValueError:
+                continue
+            if i in self.estados:
+                continue
+            try:
+                if not self.ix.obter(i) and i not in pend:
+                    f.unlink(missing_ok=True)
+                    f.with_suffix(".ok").unlink(missing_ok=True)
+                    continue
+                e = self._estado(i)
+                e.acesso = f.stat().st_mtime
+            except OSError:
+                pass
+
     def limpar_cache(self, limite=None) -> int:
         """Apaga do disco os arquivos mais antigos já guardados no Telegram, até caber no limite
         (o das configurações; 0 apaga tudo o que puder). Devolve quantos bytes liberou."""
@@ -425,6 +447,8 @@ class Unidade:
         inicio = total = self.tamanho_cache()
         if total <= limite:
             return 0
+        self._adotar_cache_do_disco()
+        total = self.tamanho_cache()
         with self.trava:
             candidatos = [e for e in self.estados.values()
                           if e.refs <= 0 and not e.sujo and not e.na_fila

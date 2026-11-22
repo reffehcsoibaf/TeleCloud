@@ -7,6 +7,15 @@ Para lançar: descreva o que mudou em "Não lançado" e rode `ferramentas\lancar
 
 ## Não lançado
 
+### Windows
+- Corrigido: o cache em disco passava do limite e o botão "Limpar o cache do disco" não apagava nada. As cópias
+  mantidas de sessões anteriores nunca eram consideradas na limpeza; agora são (as mais antigas primeiro), e as de
+  arquivos que já não existem são apagadas.
+- Painel de controle: mostra o espaço usado pelo cache (com aviso se passou do limite), a fila de envios e a hora do
+  índice, atualizados sozinhos. Ganhou os botões que estavam no menu da bandeja: guardar o índice, buscar novidades do
+  celular, exportar as chaves, abrir a pasta de dados e a opção de iniciar com o Windows.
+- Menu da bandeja simplificado: só Abrir a unidade, Abrir o painel de controle e Sair.
+
 ## 2026.11.22.0 — 2026-11-22
 
 ### Android (primeira versão)

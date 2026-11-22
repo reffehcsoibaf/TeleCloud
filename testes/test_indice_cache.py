@@ -180,6 +180,31 @@ def test_limpar_cache_a_pedido_apaga_tudo_que_ja_esta_no_telegram(tmp_path):
         un.parar()
 
 
+def test_limpar_cache_apaga_copias_de_sessoes_anteriores(tmp_path):
+    """Cópias mantidas ao reiniciar não estão em un.estados; antes ficavam para sempre no disco."""
+    import os
+    arm = ArmazenamentoMemoria()
+    nuvem = Nuvem(Indice(str(tmp_path / "i.db")), arm, tamanho_parte=4)
+    velho = nuvem.gravar("velho.bin", b"0123456789")
+    novo = nuvem.gravar("novo.bin", b"0123456789")
+    pasta = tmp_path / "cache"
+    pasta.mkdir()
+    for no, t in ((velho, 1000), (novo, 2000)):
+        (pasta / f"{no.id}.bin").write_bytes(b"0123456789")
+        (pasta / f"{no.id}.ok").write_text("10")
+        os.utime(pasta / f"{no.id}.bin", (t, t))
+    un = Unidade(nuvem, pasta, cache_max=15)
+    try:
+        (pasta / "9999.bin").write_bytes(b"sem dono")  # arquivo que não existe mais no índice
+        assert not un.estados                          # ninguém abriu nada nesta sessão
+        liberado = un.limpar_cache()
+        assert sorted(p.name for p in pasta.glob("*.bin")) == [f"{novo.id}.bin"]   # fica o mais recente
+        assert liberado == 10 + 8
+        assert un.limpar_cache(0) == 10 and not list(pasta.glob("*.bin"))
+    finally:
+        un.parar()
+
+
 def _publicar_do_celular(arm, base_copia, alterar):
     """Simula o celular: parte da cópia do PC, altera e publica uma cópia filha no armazenamento."""
     cel = Indice()

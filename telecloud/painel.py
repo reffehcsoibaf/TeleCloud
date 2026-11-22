@@ -56,16 +56,63 @@ def baixar(url: str, progresso=None) -> Path:
     return destino
 
 
-def ler_estado(dados: Path) -> str:
-    """Texto de estado para a janela, a partir do estado.json do programa em execução."""
-    if not sistema.instancia_ativa():
-        return "O TeleCloud não está aberto."
+def ler_dados(dados: Path) -> dict | None:
+    """Conteúdo do estado.json do programa em execução; None se não houver (programa fechado ou ainda abrindo)."""
     try:
-        e = json.loads((Path(dados) / "estado.json").read_text(encoding="utf-8"))
+        return json.loads((Path(dados) / "estado.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        return None
+
+
+def texto_estado(e: dict | None, aberto: bool) -> str:
+    if not aberto:
+        return "O TeleCloud não está aberto."
+    if not e:
         return "O TeleCloud está aberto."
     linhas = [e.get("texto", ""), f"Versão {e.get('versao', sistema.VERSAO)}. Unidade {e.get('unidade', '')}"]
     return "\n".join(l for l in linhas if l)
+
+
+def texto_cache(e: dict | None) -> str:
+    if not e or "cache" not in e:
+        return "Ainda sem informação."
+    usado, limite = e["cache"], e.get("cache_max") or 0
+    t = f"{sistema.formatar_tamanho(usado)} usados de {sistema.formatar_tamanho(limite)}"
+    if limite:
+        t += f" ({usado * 100 // limite}%)"
+        if usado > limite:
+            t += ". Acima do limite: o TeleCloud apaga do disco, aos poucos, o que já está no Telegram. " \
+                 "Use o botão Limpar o cache do disco para fazer isso agora."
+    return t
+
+
+def texto_fila(e: dict | None) -> str:
+    if not e or "esperando" not in e:
+        return "Ainda sem informação."
+    linhas = []
+    if e.get("enviando"):
+        feito, total = e.get("progresso") or (0, 0)
+        parte = f" - {sistema.formatar_tamanho(feito)} de {sistema.formatar_tamanho(total)}" if total else ""
+        linhas.append(f"Enviando: {e['enviando']}{parte}")
+    linhas += [f"Esperando: {n}" for n in e["esperando"][:30]]
+    if len(e["esperando"]) > 30:
+        linhas.append(f"... e mais {len(e['esperando']) - 30}")
+    if e.get("apagando"):
+        linhas.append(f"Removendo do Telegram: {e['apagando']} mensagem(ns)")
+    return "\n".join(linhas) or "Nenhum envio pendente."
+
+
+def texto_indice(e: dict | None) -> str:
+    if not e or "indice_salvo_em" not in e:
+        return "Ainda sem informação."
+    t = e["indice_salvo_em"]
+    return ("Guardado no Telegram às " + time.strftime("%H:%M", time.localtime(t))
+            if t else "Ainda não guardado nesta sessão.")
+
+
+def ler_estado(dados: Path) -> str:
+    """Texto de estado para a janela, a partir do estado.json do programa em execução."""
+    return texto_estado(ler_dados(dados), sistema.instancia_ativa())
 
 
 def abrir_painel(dados: Path):
@@ -78,10 +125,19 @@ def abrir_painel(dados: Path):
     fundo = wx.Panel(quadro)
     caixa = wx.BoxSizer(wx.VERTICAL)
 
-    caixa.Add(wx.StaticText(fundo, label="Estado:"), 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
-    estado = wx.TextCtrl(fundo, value=ler_estado(dados), size=(460, 70), name="Estado do TeleCloud",
-                         style=wx.TE_MULTILINE | wx.TE_READONLY)
-    caixa.Add(estado, 0, wx.ALL | wx.EXPAND, 12)
+    def campo(rotulo, nome, altura, valor=""):
+        # o rótulo é criado ANTES do campo: é a ordem que o NVDA e o Tab seguem
+        caixa.Add(wx.StaticText(fundo, label=rotulo), 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
+        c = wx.TextCtrl(fundo, value=valor, size=(460, altura), name=nome, style=wx.TE_MULTILINE | wx.TE_READONLY)
+        caixa.Add(c, 0, wx.LEFT | wx.RIGHT | wx.TOP | wx.EXPAND, 6)
+        return c
+
+    d0, aberto0 = ler_dados(dados), sistema.instancia_ativa()
+    estado = campo("Estado:", "Estado do TeleCloud", 70, texto_estado(d0, aberto0))
+    campo_cache = campo("Espaço em disco usado pelo cache:", "Espaço em disco usado pelo cache", 50, texto_cache(d0))
+    campo_fila = campo("Fila de envios:", "Fila de envios", 80, texto_fila(d0))
+    campo_indice = campo("Índice (cópia da lista de arquivos no Telegram):", "Índice no Telegram", 30, texto_indice(d0))
+    caixa.AddSpacer(12)
 
     botoes = {}
 
@@ -163,6 +219,28 @@ def abrir_painel(dados: Path):
         else:
             avisar("O TeleCloud não está aberto, ou é de uma versão que não aceita este pedido.")
 
+    def pedir(evento, texto_ok):
+        if sistema.acionar_evento(evento):
+            avisar(texto_ok)
+        else:
+            avisar("O TeleCloud não está aberto, ou é de uma versão que não aceita este pedido.")
+
+    def guardar_indice():
+        pedir(sistema.EVENTO_GUARDAR_INDICE, "Pedido enviado. O TeleCloud está guardando o índice no Telegram; "
+                                             "ele avisa pelo ícone da bandeja quando terminar.")
+
+    def buscar_novidades():
+        pedir(sistema.EVENTO_BUSCAR_NOVIDADES, "Pedido enviado. O TeleCloud está buscando no Telegram o que veio do "
+                                               "celular; ele avisa pelo ícone da bandeja quando terminar.")
+
+    def exportar_chaves():
+        cmd = [sys.executable] if sistema.empacotado() else [sys.executable, os.path.abspath(sys.argv[0])]
+        env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
+        subprocess.Popen(cmd + ["--exportar-chaves", "--dados", str(dados)], env=env, close_fds=True)
+
+    def abrir_dados():
+        os.startfile(str(dados))
+
     def sair():
         if sistema.pedir_para_sair():
             avisar("Pedido enviado. O TeleCloud está fechando.")
@@ -175,6 +253,23 @@ def abrir_painel(dados: Path):
     botao("verificar", "&Verificar atualizações", verificar)
     botao("instalar", "&Baixar e instalar a versão nova", instalar).Hide()
     botao("cache", "&Limpar o cache do disco", limpar_cache)
+    botao("indice", "Guardar o &índice no Telegram agora", guardar_indice)
+    botao("novidades", "Buscar &novidades do celular no Telegram", buscar_novidades)
+    botao("chaves", "&Exportar as chaves para o celular", exportar_chaves)
+    botao("dados", "Abrir a &pasta de dados e registro", abrir_dados)
+    inicio = wx.CheckBox(fundo, label="Iniciar com o &Windows")
+    inicio.SetValue(sistema.inicio_ativo())
+
+    def alternar_inicio(_e):
+        try:
+            sistema.definir_inicio(inicio.GetValue())
+            avisar("O TeleCloud vai abrir junto com o Windows." if inicio.GetValue()
+                   else "O TeleCloud não vai mais abrir junto com o Windows.")
+        except OSError as ex:
+            inicio.SetValue(sistema.inicio_ativo())
+            avisar(f"Não consegui mudar isso: {ex}")
+    inicio.Bind(wx.EVT_CHECKBOX, alternar_inicio)
+    caixa.Add(inicio, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
     botao("desconectar", "&Desconectar a conta do Telegram", desconectar)
     botao("sair", "&Sair do TeleCloud", sair)
     botao("fechar", "Fe&char esta janela", quadro.Close)
@@ -192,9 +287,14 @@ def abrir_painel(dados: Path):
     relogio = wx.Timer(quadro)
 
     def atualizar_estado(_e):
+        d = ler_dados(dados)
+        # cache, fila e índice não são tocados pelos avisos das ações, então sempre acompanham o programa
+        for c, t in ((campo_cache, texto_cache(d)), (campo_fila, texto_fila(d)), (campo_indice, texto_indice(d))):
+            if t != c.GetValue():
+                c.SetValue(t)
         if time.time() - ultimo_aviso[0] < 30:
             return   # deixa a resposta da última ação à vista antes de voltar a mostrar o estado
-        novo = ler_estado(dados)
+        novo = texto_estado(d, sistema.instancia_ativa())
         if novo != estado.GetValue():
             estado.SetValue(novo)
     quadro.Bind(wx.EVT_TIMER, atualizar_estado, relogio)

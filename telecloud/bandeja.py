@@ -13,11 +13,7 @@ from PIL import Image, ImageDraw
 from . import sistema
 
 
-def _tamanho(n: int) -> str:
-    for u in ("B", "KB", "MB", "GB", "TB"):
-        if n < 1024 or u == "TB":
-            return f"{n:.0f} {u}" if u == "B" else f"{n:.1f} {u}".replace(".", ",")
-        n /= 1024
+_tamanho = sistema.formatar_tamanho
 
 
 def _icone(cor: str) -> Image.Image:
@@ -37,7 +33,7 @@ class Bandeja:
         self.un = un
         self.ao_desconectar = ao_desconectar   # chamada em outra thread; confirma, limpa e fecha o programa
         self.ao_configurar = ao_configurar   # chamada quando a janela de configurações fecha
-        self._janela_config = None
+        self._gravado_em = 0.0
         self.letra = unidade_letra
         self.pasta_dados = pasta_dados
         self.ao_sair = ao_sair  # chamada em outra thread; deve encerrar tudo e depois chamar parar()
@@ -70,54 +66,11 @@ class Bandeja:
             return "Removendo arquivos apagados do Telegram", "ocupado"
         return "Tudo enviado", "ok"
 
-    def _itens_fila(self):
-        s = self.un.situacao()
-        itens = []
-        if s["enviando"]:
-            feito, total = s["progresso"]
-            parte = f" - {_tamanho(feito)} de {_tamanho(total)}" if total else ""
-            itens.append(pystray.MenuItem(f"Enviando: {s['enviando']}{parte}", None, enabled=False))
-        for nome in s["esperando"][:15]:
-            itens.append(pystray.MenuItem(f"Esperando: {nome}", None, enabled=False))
-        if len(s["esperando"]) > 15:
-            itens.append(pystray.MenuItem(f"... e mais {len(s['esperando']) - 15}", None, enabled=False))
-        if s["apagando"]:
-            itens.append(pystray.MenuItem(f"Removendo do Telegram: {s['apagando']} mensagem(ns)", None, enabled=False))
-        if not itens:
-            itens.append(pystray.MenuItem("Nenhum envio pendente", None, enabled=False))
-        return itens
-
     def _menu(self):
-        def estado(_):
-            return self._resumo()[0]
-
-        def cache(_):
-            s = self.un.situacao()
-            return f"Espaço usado no disco: {_tamanho(s['cache'])} de {_tamanho(s['cache_max'])}"
-
-        def indice(_):
-            t = self.un.situacao()["indice_salvo_em"]
-            return ("Índice guardado no Telegram às " + time.strftime("%H:%M", time.localtime(t))
-                    if t else "Índice ainda não guardado nesta sessão")
-
+        # Só o essencial; estado, fila, cache e o resto ficam no painel de controle.
         return pystray.Menu(
-            pystray.MenuItem(estado, None, enabled=False),
             pystray.MenuItem(f"Abrir a unidade {self.letra}", self._abrir_unidade, default=True),
             pystray.MenuItem("Abrir o painel de controle", self._abrir_painel),
-            pystray.MenuItem("Fila de envios", pystray.Menu(lambda: self._itens_fila())),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(cache, None, enabled=False),
-            pystray.MenuItem(indice, None, enabled=False),
-            pystray.MenuItem("Guardar o índice no Telegram agora", self._guardar_indice),
-            pystray.MenuItem("Buscar novidades do celular no Telegram", self._buscar_novidades),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Configurações...", self._configuracoes),
-            pystray.MenuItem("Exportar as chaves para o celular...", self._exportar_chaves),
-            *([pystray.MenuItem("Desconectar a conta do Telegram...", self._desconectar)]
-              if self.ao_desconectar else []),
-            pystray.MenuItem("Iniciar com o Windows", self._alternar_inicio,
-                             checked=lambda _: sistema.inicio_ativo()),
-            pystray.MenuItem("Abrir a pasta de dados e registro", self._abrir_dados),
             pystray.MenuItem("Sair", self._sair),
         )
 
@@ -136,9 +89,6 @@ class Bandeja:
         env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
         subprocess.Popen(self._comando("--painel"), env=env, close_fds=True)
 
-    def _abrir_dados(self, *_):
-        os.startfile(str(self.pasta_dados))
-
     def _buscar_novidades(self, *_):
         def f():
             try:
@@ -154,40 +104,6 @@ class Bandeja:
             ok = self.un.salvar_indice_agora()
             self.avisar("Índice guardado no Telegram." if ok else "Não foi possível guardar o índice agora.")
         threading.Thread(target=f, daemon=True).start()
-
-    def _exportar_chaves(self, *_):
-        """Abre, num processo à parte, a janela que salva o arquivo de chaves para o app do celular."""
-        import subprocess
-        env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
-        subprocess.Popen(self._comando("--exportar-chaves"), env=env, close_fds=True)
-
-    def _configuracoes(self, *_):
-        """Abre a janela num processo à parte (wx e bandeja não convivem no mesmo) e relê o config ao fechar."""
-        import subprocess
-        if self._janela_config is not None and self._janela_config.poll() is None:
-            return   # já está aberta
-        cmd = self._comando("--configuracoes")
-        env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
-        self._janela_config = proc = subprocess.Popen(cmd, env=env, close_fds=True)
-
-        def esperar():
-            proc.wait()
-            try:
-                if self.ao_configurar:
-                    self.ao_configurar()
-                self.icone.update_menu()
-            except Exception:
-                pass
-        threading.Thread(target=esperar, daemon=True).start()
-
-    def _alternar_inicio(self, *_):
-        sistema.definir_inicio(not sistema.inicio_ativo())
-        self.icone.update_menu()
-
-    def _desconectar(self, *_):
-        if self.saindo:
-            return
-        threading.Thread(target=self.ao_desconectar, daemon=True).start()
 
     def _sair(self, *_):
         if self.saindo:
@@ -208,19 +124,24 @@ class Bandeja:
         s = self.un.situacao()
         # a fila entra na assinatura: o menu é montado de uma vez e só muda quando chamamos update_menu
         assinatura = (texto, nivel, s["enviando"], tuple(s["esperando"]), s["apagando"])
-        if forcar or assinatura != self._assinatura:
+        mudou = forcar or assinatura != self._assinatura
+        if mudou:
             self._assinatura = assinatura
             self.icone.icon = _icone(ICONES[nivel])
             self.icone.title = ("TeleCloud: " + texto)[:127]
-            self.icone.update_menu()
+        # o uso do cache muda sem mudar o resto: regrava de tempos em tempos para o painel acompanhar
+        if mudou or time.time() - self._gravado_em >= 3:
             self._gravar_estado(texto, nivel, s)
 
     def _gravar_estado(self, texto, nivel, s):
         """O painel de controle (outro processo) lê este arquivo para mostrar o estado."""
+        self._gravado_em = time.time()
         try:
             (Path(self.pasta_dados) / "estado.json").write_text(json.dumps({
                 "texto": texto, "nivel": nivel, "unidade": self.letra, "versao": sistema.VERSAO,
                 "pendentes": len(s["esperando"]) + (1 if s["enviando"] else 0), "pausa_ate": s["pausa_ate"],
+                "enviando": s["enviando"], "progresso": list(s["progresso"]), "esperando": s["esperando"],
+                "apagando": s["apagando"], "indice_salvo_em": s["indice_salvo_em"],
                 "cache": s["cache"], "cache_max": s["cache_max"], "em": time.time()}), encoding="utf-8")
         except OSError:
             pass

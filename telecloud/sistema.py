@@ -111,6 +111,24 @@ def criar_evento_limpar_cache():
     return k.CreateEventW(None, False, False, EVENTO_LIMPAR_CACHE)   # rearma sozinho a cada pedido
 
 
+EVENTO_GUARDAR_INDICE = "Local\\TeleCloud-pedido-guardar-indice"
+EVENTO_BUSCAR_NOVIDADES = "Local\\TeleCloud-pedido-buscar-novidades"
+
+
+def criar_evento_de_pedido(nome: str):
+    """Evento que se rearma sozinho a cada pedido do painel de controle."""
+    k = ctypes.windll.kernel32
+    k.CreateEventW.restype = ctypes.c_void_p
+    return k.CreateEventW(None, False, False, nome)
+
+
+def formatar_tamanho(n: float) -> str:
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or u == "TB":
+            return f"{n:.0f} {u}" if u == "B" else f"{n:.1f} {u}".replace(".", ",")
+        n /= 1024
+
+
 def criar_evento_desconectar():
     k = ctypes.windll.kernel32
     k.CreateEventW.restype = ctypes.c_void_p
