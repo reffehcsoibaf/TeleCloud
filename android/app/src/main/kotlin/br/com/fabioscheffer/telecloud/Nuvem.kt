@@ -142,8 +142,15 @@ class Nuvem(private val td: Td, private val ctx: Context) {
     /** Arquivos recebidos de outros apps (Compartilhar), esperando a escolha da pasta. */
     val compartilhados: StateFlow<List<Uri>> = _compartilhados
 
+    /** Nome de exibição de um arquivo recebido de outro app. */
+    fun nomeDe(uri: Uri): String = nomeETamanho(uri).first
+
     fun receberCompartilhados(uris: List<Uri>) {
-        if (uris.isNotEmpty()) _compartilhados.value = uris
+        if (uris.isEmpty()) return
+        _compartilhados.value = uris
+        val nomes = uris.joinToString(", ") { nomeDe(it) }
+        // Anunciado pela região de avisos: quem usa leitor de tela precisa saber que há algo esperando.
+        _transferencia.value = "Recebido para enviar ao TeleCloud: $nomes. Abra a pasta de destino e toque em Enviar aqui."
     }
 
     fun descartarCompartilhados() {
@@ -399,37 +406,109 @@ class Nuvem(private val td: Td, private val ctx: Context) {
      */
     private fun organizar(fazendo: String, pronto: String, mudar: suspend (Indice, Long) -> List<String>) {
         val nomes = _estado.value.caminho.map { it.nome }
+        escopo.launch { organizarAgora(nomes, fazendo, pronto, mudar) }
+    }
+
+    /** Faz a mudança na pasta de caminho [nomes]; devolve null se deu certo, ou o erro. */
+    private suspend fun organizarAgora(
+        nomes: List<String>, fazendo: String, pronto: String, mudar: suspend (Indice, Long) -> List<String>,
+    ): Throwable? = emSegundoPlano { trava.withLock {
+        try {
+            _transferencia.value = fazendo
+            indice?.fechar()
+            indice = null
+            val idx = baixarIndice()
+            indice = idx
+            val pastas = idx.resolverPastas(nomes)
+                ?: throw IllegalStateException("A pasta não existe mais. Atualize a lista.")
+            val pai = pastas.lastOrNull()?.id ?: RAIZ
+            val refs = mudar(idx, pai)
+            salvarIndice(idx)
+            if (refs.isNotEmpty()) {
+                runCatching { td.chamar(TdApi.DeleteMessages(grupo, refs.map { idDaTdlib(it) }.toLongArray(), true)) }
+            }
+            atualizarListaAtual(idx)
+            avisarProvedor(idx)
+            _transferencia.value = pronto
+            null
+        } catch (e: Exception) {
+            Registro.erro(ctx, fazendo, e)
+            // A mudança não foi publicada: volta ao índice do grupo para a tela não mostrar algo que não existe.
+            runCatching {
+                indice?.fechar()
+                indice = null
+                val idx = baixarIndice()
+                indice = idx
+                atualizarListaAtual(idx)
+            }
+            _transferencia.value = "Não foi possível: ${e.message ?: e}"
+            e
+        }
+    } }
+
+    /** Reaplica à tela a pasta que está aberta, com os itens do índice [idx]. */
+    private fun atualizarListaAtual(idx: Indice) {
+        val pastas = idx.resolverPastas(_estado.value.caminho.map { it.nome }) ?: emptyList()
+        _estado.value = _estado.value.copy(caminho = pastas, itens = idx.listar(pastas.lastOrNull()?.id ?: RAIZ))
+    }
+
+    // ---------- chamadas do provedor de documentos que gravam ----------
+
+    private suspend fun garantirLogin() {
+        td.iniciar()
+        withTimeoutOrNull(30_000) { td.etapa.first { it != Etapa.Iniciando } }
+        if (td.etapa.value != Etapa.Pronto) throw IllegalStateException("Entre na conta no app TeleCloud.")
+    }
+
+    fun criarPastaParaProvedor(nomesPai: List<String>, nome: String): Long = runBlocking(Dispatchers.IO) {
+        garantirLogin()
+        val erro = organizarAgora(nomesPai, "Criando a pasta $nome…", "Pasta $nome criada.") { idx, pai ->
+            val n = idx.criarPasta(pai, nome)
+            if (pai == RAIZ) topicoDe(n.nome)
+            emptyList()
+        }
+        if (erro != null) throw erro
+        val idx = indice ?: throw IllegalStateException("Índice indisponível.")
+        val pastas = idx.resolverPastas(nomesPai) ?: throw IllegalStateException("A pasta não existe mais.")
+        idx.filhoPorNome(pastas.lastOrNull()?.id ?: RAIZ, nome)?.id ?: throw IllegalStateException("A pasta não foi criada.")
+    }
+
+    fun renomearParaProvedor(nomesPai: List<String>, nome: String, novo: String) = runBlocking(Dispatchers.IO) {
+        garantirLogin()
+        val erro = organizarAgora(nomesPai, "Renomeando $nome…", "$nome renomeado para ${novo.trim()}.") { idx, pai ->
+            val alvo = idx.filhoPorNome(pai, nome) ?: throw IllegalStateException("$nome não existe mais.")
+            idx.renomear(alvo, pai, novo)
+            emptyList()
+        }
+        if (erro != null) throw erro
+    }
+
+    fun apagarParaProvedor(nomesPai: List<String>, nome: String) = runBlocking(Dispatchers.IO) {
+        garantirLogin()
+        val erro = organizarAgora(nomesPai, "Apagando $nome…", "$nome apagado.") { idx, pai ->
+            val alvo = idx.filhoPorNome(pai, nome) ?: throw IllegalStateException("$nome não existe mais.")
+            idx.apagar(alvo)
+        }
+        if (erro != null) throw erro
+    }
+
+    /** Envia um arquivo que o provedor recebeu de outro app (substitui o de mesmo nome); apaga o temporário no fim. */
+    fun enviarDoProvedor(arquivo: File, nome: String, nomesPasta: List<String>) {
         escopo.launch {
             emSegundoPlano { trava.withLock {
                 try {
-                    _transferencia.value = fazendo
-                    indice?.fechar()
-                    indice = null
-                    val idx = baixarIndice()
-                    indice = idx
-                    val pastas = idx.resolverPastas(nomes)
-                        ?: throw IllegalStateException("A pasta aberta não existe mais. Atualize a lista.")
-                    val pai = pastas.lastOrNull()?.id ?: RAIZ
-                    val refs = mudar(idx, pai)
-                    salvarIndice(idx)
-                    if (refs.isNotEmpty()) {
-                        runCatching { td.chamar(TdApi.DeleteMessages(grupo, refs.map { idDaTdlib(it) }.toLongArray(), true)) }
+                    garantirLogin()
+                    if (arquivo.length() == 0L) {
+                        _transferencia.value = "$nome está vazio e não foi enviado."
+                    } else {
+                        enviarUm(Uri.fromFile(arquivo), nome, arquivo.length(), nomesPasta)
+                        _transferencia.value = "$nome enviado."
                     }
-                    _estado.value = _estado.value.copy(caminho = pastas, itens = idx.listar(pai))
-                    avisarProvedor(idx)
-                    _transferencia.value = pronto
                 } catch (e: Exception) {
-                    Registro.erro(ctx, fazendo, e)
-                    // A mudança não foi publicada: volta ao índice do grupo para a tela não mostrar algo que não existe.
-                    runCatching {
-                        indice?.fechar()
-                        indice = null
-                        val idx = baixarIndice()
-                        indice = idx
-                        val pastas = idx.resolverPastas(nomes) ?: emptyList()
-                        _estado.value = _estado.value.copy(caminho = pastas, itens = idx.listar(pastas.lastOrNull()?.id ?: RAIZ))
-                    }
-                    _transferencia.value = "Não foi possível: ${e.message ?: e}"
+                    Registro.erro(ctx, "enviar pelo provedor $nome", e)
+                    _transferencia.value = "Erro ao enviar $nome: ${e.message ?: e}"
+                } finally {
+                    arquivo.delete()
                 }
             } }
         }
@@ -439,7 +518,7 @@ class Nuvem(private val td: Td, private val ctx: Context) {
 
     /** Envia arquivos para a pasta aberta no momento. */
     fun enviar(uris: List<Uri>) {
-        val pastaAtual = _estado.value.caminho
+        val pastaAtual = _estado.value.caminho.map { it.nome }
         escopo.launch {
             emSegundoPlano { trava.withLock {
                 for (uri in uris) {
@@ -457,7 +536,7 @@ class Nuvem(private val td: Td, private val ctx: Context) {
         }
     }
 
-    private suspend fun enviarUm(uri: Uri, nome: String, tamanho: Long, pasta: List<No>) {
+    private suspend fun enviarUm(uri: Uri, nome: String, tamanho: Long, nomesPasta: List<String>) {
         if (tamanho == 0L) throw IllegalStateException("O arquivo está vazio.")
         // Antes de gravar, pega o índice mais recente (o Windows pode ter mudado algo).
         _transferencia.value = "Atualizando o índice antes de enviar $nome…"
@@ -465,10 +544,10 @@ class Nuvem(private val td: Td, private val ctx: Context) {
         indice = null
         val idx = baixarIndice()
         indice = idx
-        val pai = pasta.lastOrNull()?.id ?: RAIZ
-        if (!idx.existe(pai)) throw IllegalStateException("A pasta de destino não existe mais no índice.")
+        val pastas = idx.resolverPastas(nomesPasta) ?: throw IllegalStateException("A pasta de destino não existe mais no índice.")
+        val pai = pastas.lastOrNull()?.id ?: RAIZ
 
-        val topico = topicoDe(if (pasta.isEmpty()) TOPICO_RAIZ else pasta.first().nome)
+        val topico = topicoDe(if (pastas.isEmpty()) TOPICO_RAIZ else pastas.first().nome)
         val total = if (tamanho > 0) ((tamanho + TAMANHO_PARTE - 1) / TAMANHO_PARTE).toInt() else 0
         val partes = ArrayList<Parte>()
         val temp = File(ctx.cacheDir, "envio").apply { mkdirs() }
@@ -512,8 +591,9 @@ class Nuvem(private val td: Td, private val ctx: Context) {
                 td.chamar(TdApi.DeleteMessages(grupo, antigas.map { idDaTdlib(it) }.toLongArray(), true))
             }
         }
-        // Mostra o resultado na pasta aberta.
-        _estado.value = _estado.value.copy(itens = idx.listar(pai))
+        // Mostra o resultado na pasta aberta e avisa o app Arquivos.
+        atualizarListaAtual(idx)
+        avisarProvedor(idx)
     }
 
     /** Copia até [limite] bytes do fluxo para o arquivo; devolve quantos copiou. */

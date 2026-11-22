@@ -137,6 +137,18 @@ class Indice(private val arquivo: File) {
             if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null
         }
 
+    /** Nomes das pastas da raiz até o item [id] (inclusive, se ele for pasta); vazio para a raiz. */
+    fun nomesDasPastasAte(id: Long?): List<String> {
+        val r = ArrayList<String>()
+        var atual = id
+        while (atual != null && atual != RAIZ) {
+            val n = obter(atual) ?: break
+            r += n.nome
+            atual = paiDe(atual)
+        }
+        return r.reversed()
+    }
+
     /** Ids de todas as pastas (para avisar o app Arquivos de que o conteúdo mudou). */
     fun pastas(): List<Long> {
         val r = ArrayList<Long>()

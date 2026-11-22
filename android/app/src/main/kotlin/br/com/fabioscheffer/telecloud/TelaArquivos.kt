@@ -91,6 +91,33 @@ fun TelaArquivos(nuvem: Nuvem) {
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
         )
         Text(msg, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+        if (recebidos.isNotEmpty()) {
+            // Arquivos que outro app (WhatsApp, Arquivos...) mandou para o TeleCloud: ficam no topo, com o foco
+            // no botão de enviar, para ninguém precisar procurar.
+            val nomesRecebidos = remember(recebidos) { recebidos.map { nuvem.nomeDe(it) } }
+            val focoEnvio = remember { FocusRequester() }
+            LaunchedEffect(recebidos, e.pronto) { if (e.pronto) runCatching { focoEnvio.requestFocus() } }
+            Text(
+                "Arquivo(s) para enviar: ${nomesRecebidos.joinToString(", ")}",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { heading() },
+            )
+            if (e.pronto) {
+                Text("Abra a pasta de destino (ou use a que está aberta) e toque em Enviar aqui.")
+                Button(
+                    onClick = {
+                        nuvem.enviar(recebidos)
+                        nuvem.descartarCompartilhados()
+                    },
+                    modifier = Modifier.heightIn(min = 48.dp).focusRequester(focoEnvio),
+                ) { Text("Enviar aqui, em $local: ${nomesRecebidos.joinToString(", ")}") }
+            } else {
+                Text("Carregando a lista de pastas para você escolher o destino…")
+            }
+            Button(onClick = { nuvem.descartarCompartilhados() }, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text("Cancelar o envio de ${nomesRecebidos.joinToString(", ")}")
+            }
+        }
         if (e.erro != null) {
             Button(onClick = { nuvem.carregar() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Tentar de novo") }
         }
@@ -123,15 +150,6 @@ fun TelaArquivos(nuvem: Nuvem) {
             }
             Button(onClick = { abrirNoGerenciador(contexto, nuvem) }, modifier = Modifier.heightIn(min = 48.dp)) {
                 Text("Ver o TeleCloud no gerenciador de arquivos do Android")
-            }
-            if (recebidos.isNotEmpty()) {
-                Button(
-                    onClick = {
-                        nuvem.enviar(recebidos)
-                        nuvem.descartarCompartilhados()
-                    },
-                    modifier = Modifier.heightIn(min = 48.dp),
-                ) { Text("Enviar para $local os ${recebidos.size} arquivo(s) compartilhado(s)") }
             }
         }
         if (e.caminho.isNotEmpty()) {

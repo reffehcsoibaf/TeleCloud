@@ -12,16 +12,18 @@ android {
         applicationId = "br.com.fabioscheffer.telecloud"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "2026.11.22.22"
+        versionCode = 28
+        versionName = "2026.11.22.26"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
 
-        // As chaves api_id/api_hash vêm do config.json do TeleCloud do Windows (fora do git) e ficam só
-        // no APK gerado aqui. Não compartilhe esse APK. Sem o arquivo, o app pede as chaves na tela.
+        // Por padrão o APK NÃO leva as chaves api_id/api_hash: elas entram no celular pelo arquivo
+        // telecloud-config.json (ferramentas\enviar_chaves_para_celular.bat) e ficam só no armazenamento do app.
+        // Só com `gradlew -PembutirChaves=true` elas são lidas de ..\dados\config.json e embutidas no APK
+        // (nesse caso, não compartilhe esse APK).
         var chaveId = 0
         var chaveHash = ""
         val cfg = rootProject.file("../dados/config.json")
-        if (cfg.exists()) {
+        if (cfg.exists() && project.findProperty("embutirChaves") == "true") {
             @Suppress("UNCHECKED_CAST")
             val j = groovy.json.JsonSlurper().parseText(cfg.readText().removePrefix("﻿")) as Map<String, Any?>
             chaveId = (j["api_id"] as? Number)?.toInt() ?: 0
@@ -59,4 +61,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

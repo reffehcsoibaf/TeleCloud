@@ -14,9 +14,13 @@ o que um lado grava aparece no outro. Feito para uso com TalkBack.
 1. **TDLib**: não está no repositório. Rode o fluxo de trabalho "TDLib para Android" (aba Actions) e baixe o
    artefato `tdlib-android` para `android\tdlib-baixado` (deve ficar `java\` e `libs\` dentro dela):
    `gh run download <id> -n tdlib-android -D android\tdlib-baixado`.
-2. **Chaves do Telegram**: a compilação lê `api_id` e `api_hash` de `..\dados\config.json` (o mesmo arquivo do
-   TeleCloud do Windows, fora do git) e as embute no APK. **Não compartilhe o APK gerado.** Sem o arquivo, o app
-   pede as chaves na primeira abertura.
+2. **Chaves do Telegram**: o APK **não leva** as chaves `api_id`/`api_hash` (nem o repositório). Elas entram no
+   celular por um arquivo. No TeleCloud do Windows, menu do ícone da bandeja, **Exportar as chaves para o
+   celular...** grava `telecloud-config.json` (só as duas chaves) onde você escolher; copie-o para a pasta
+   Download do celular e, no app, toque em **Importar o arquivo de chaves**. O app guarda as chaves no
+   armazenamento privado dele e apaga o arquivo. Para quem desenvolve, `ferramentas\enviar_chaves_para_celular.bat`
+   faz o mesmo por USB (adb). Também dá para digitar as chaves. Só com `gradlew -PembutirChaves=true` elas são
+   embutidas no APK, lidas de `..\dados\config.json` (nesse caso, não compartilhe o APK).
 3. `set JAVA_HOME=C:\android\jdk17` e `gradlew.bat :app:assembleDebug`. Instalar: `adb install -r` ou
    `ferramentas\copiar_apk_para_celular.bat`.
 

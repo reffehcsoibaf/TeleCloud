@@ -7,6 +7,19 @@ import kotlinx.coroutines.flow.StateFlow
 import org.drinkless.tdlib.Client
 import org.drinkless.tdlib.TdApi
 
+/**
+ * Lê as chaves do arquivo telecloud-config.json gerado no Windows: {"api_id": 123, "api_hash": "..."}.
+ * Devolve (api_id, api_hash) ou null se o conteúdo não servir.
+ */
+fun lerChaves(json: String): Pair<Int, String>? = try {
+    val o = org.json.JSONObject(json)
+    val id = o.opt("api_id").toString().trim().toIntOrNull()
+    val hash = o.optString("api_hash").trim()
+    if (id != null && id > 0 && hash.length >= 8) id to hash else null
+} catch (e: Exception) {
+    null
+}
+
 /** Passos do login, na ordem em que a TDLib os pede. */
 enum class Etapa { Iniciando, Chaves, Telefone, Codigo, Senha, Pronto, Encerrado }
 
@@ -49,6 +62,17 @@ class Td(private val ctx: Context) {
         _erro.value = null
         prefs.edit().putInt("api_id", id).putString("api_hash", hash).apply()
         iniciar()
+    }
+
+    /** Importa as chaves do conteúdo de um telecloud-config.json; devolve true se deu certo. */
+    fun importarChaves(json: String): Boolean {
+        val chaves = lerChaves(json)
+        if (chaves == null) {
+            _erro.value = "Esse arquivo não tem as chaves do TeleCloud (api_id e api_hash)."
+            return false
+        }
+        salvarChaves(chaves.first.toString(), chaves.second)
+        return true
     }
 
     fun enviarTelefone(telefone: String) = pedir(TdApi.SetAuthenticationPhoneNumber(telefone.trim(), null))

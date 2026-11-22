@@ -141,18 +141,54 @@ private fun PassoCampo(
     Button(onClick = { enviar(valor) }, modifier = Modifier.heightIn(min = 48.dp)) { Text(botao) }
 }
 
+/** Seletor de arquivo que também pede permissão de apagar o arquivo escolhido (as chaves não devem ficar em Download). */
+private class AbrirParaImportar : androidx.activity.result.contract.ActivityResultContracts.OpenDocument() {
+    override fun createIntent(context: android.content.Context, input: Array<String>): android.content.Intent =
+        super.createIntent(context, input).addFlags(
+            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+        )
+}
+
 @Composable
 private fun PassoChaves(td: Td) {
     var id by remember { mutableStateOf("") }
     var hash by remember { mutableStateOf("") }
+    var aviso by remember { mutableStateOf("") }
+    val contexto = androidx.compose.ui.platform.LocalContext.current
+    val importar = androidx.activity.compose.rememberLauncherForActivityResult(AbrirParaImportar()) { uri ->
+        if (uri != null) {
+            val texto = runCatching {
+                contexto.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+            }.getOrNull()
+            if (texto != null && td.importarChaves(texto)) {
+                // As chaves já estão guardadas no app; o arquivo em Download não deve ficar por aí.
+                val apagou = runCatching { android.provider.DocumentsContract.deleteDocument(contexto.contentResolver, uri) }
+                    .getOrDefault(false)
+                aviso = if (apagou) "Chaves importadas. O arquivo foi apagado da pasta Download."
+                else "Chaves importadas. Apague o arquivo telecloud-config.json da pasta Download."
+            } else if (texto == null) {
+                aviso = "Não consegui ler o arquivo escolhido."
+            }
+        }
+    }
     val foco = remember { FocusRequester() }
     LaunchedEffect(Unit) { foco.requestFocus() }
     Titulo("Chaves do Telegram")
-    Text("São as mesmas chaves api_id e api_hash que o TeleCloud do Windows usa (my.telegram.org). Ficam só neste aparelho.")
+    Text(
+        "São as mesmas chaves api_id e api_hash que o TeleCloud do Windows usa. O jeito mais fácil: no computador, " +
+            "no menu do ícone do TeleCloud, escolha Exportar as chaves para o celular, copie o arquivo para a pasta " +
+            "Download deste aparelho e toque em Importar o arquivo de chaves. Elas ficam só neste aparelho.",
+    )
+    Button(
+        onClick = { importar.launch(arrayOf("application/json", "text/plain", "application/octet-stream", "*/*")) },
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).focusRequester(foco),
+    ) { Text("Importar o arquivo de chaves (telecloud-config.json)") }
+    if (aviso.isNotEmpty()) Text(aviso, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+    Text("Ou digite as chaves:")
     OutlinedTextField(
         value = id, onValueChange = { id = it }, label = { Text("api_id") }, singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        modifier = Modifier.fillMaxWidth().focusRequester(foco),
+        modifier = Modifier.fillMaxWidth(),
     )
     OutlinedTextField(
         value = hash, onValueChange = { hash = it }, label = { Text("api_hash") }, singleLine = true,
