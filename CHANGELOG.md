@@ -7,6 +7,8 @@ Para lançar: descreva o que mudou em "Não lançado" e rode `ferramentas\lancar
 
 ## Não lançado
 
+## 2026.11.22.0 — 2026-11-22
+
 ### Android (primeira versão)
 - Aplicativo Android com a mesma conta, o mesmo grupo e o mesmo índice do Windows: lista as pastas e os arquivos,
   baixa para a pasta Download, envia (inclusive pelo "Compartilhar" de outros aplicativos, como o WhatsApp), cria
