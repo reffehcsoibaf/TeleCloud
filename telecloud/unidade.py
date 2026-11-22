@@ -103,7 +103,7 @@ class Alca:
 
 class Unidade:
     def __init__(self, nuvem: Nuvem, pasta_cache: Path, rotulo="TeleCloud",
-                 cache_max=5 * 1024**3, silencio_indice=20.0):
+                 cache_max=5 * 1024**3, silencio_indice=5.0):
         self.nuvem = nuvem
         self.cache_max = cache_max
         self.pausa_envios = 0.0   # segundos de pausa após cada arquivo pequeno enviado (0 = sem pausa)
@@ -357,7 +357,7 @@ class Unidade:
             except Exception:
                 log.exception("não consegui conferir o índice guardado no Telegram")
         if self.ix.mudancas != self._visto and not self._mudou_em_recente(agora):
-            if agora - self._tentou_indice > 60:
+            if agora - self._tentou_indice > 10:
                 self.salvar_indice_agora()
         if agora - self._ultima_limpeza > 30:
             self._ultima_limpeza = agora
