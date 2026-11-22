@@ -1,0 +1,56 @@
+name: TDLib para Android
+
+# Compila a TDLib oficial (github.com/tdlib/td) para Android, no commit fixado abaixo,
+# e publica o resultado como artefato. Rodar manualmente: aba Actions > "TDLib para Android" > Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Commit da tdlib/td a compilar"
+        default: "03220f6b3043c6fd7785fbf0901d63f19ad19974"
+
+permissions:
+  contents: read
+
+jobs:
+  compilar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Ferramentas
+        run: sudo apt-get update && sudo apt-get install -y gperf php-cli cmake build-essential perl
+
+      - name: Baixar a TDLib oficial
+        run: |
+          git clone https://github.com/tdlib/td.git td
+          cd td
+          git checkout "${{ inputs.commit }}"
+          git log -1 --format='%H %ad %s'
+
+      - name: SDK e NDK
+        working-directory: td/example/android
+        run: |
+          ./check-environment.sh
+          ./fetch-sdk.sh
+
+      - name: OpenSSL
+        working-directory: td/example/android
+        run: ./build-openssl.sh
+
+      - name: TDLib (interface Java, API 26, 3 arquiteturas)
+        working-directory: td/example/android
+        run: ./build-tdlib.sh '' '' '' '' Java 26 "arm64-v8a armeabi-v7a x86_64"
+
+      - name: Resumo
+        working-directory: td/example/android/tdlib
+        run: |
+          find libs -name '*.so' -exec ls -l {} \;
+          ls -l java/org/drinkless/tdlib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tdlib-android
+          path: |
+            td/example/android/tdlib/libs
+            td/example/android/tdlib/java
+          if-no-files-found: error
