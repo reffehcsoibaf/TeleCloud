@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -14,7 +16,8 @@ android {
         targetSdk = 35
         versionCode = 28
         versionName = "2026.11.22.26"
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+        // Só arquiteturas de celulares reais (a TDLib é grande); emulador x86 não é alvo.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
 
         // Por padrão o APK NÃO leva as chaves api_id/api_hash: elas entram no celular pelo arquivo
         // telecloud-config.json (ferramentas\enviar_chaves_para_celular.bat) e ficam só no armazenamento do app.
@@ -31,6 +34,30 @@ android {
         }
         buildConfigField("int", "API_ID", chaveId.toString())
         buildConfigField("String", "API_HASH", "\"$chaveHash\"")
+    }
+
+    // A chave de lançamento do TeleCloud fica fora do repositório (C:\android\keys\telecloud.properties; faça cópia
+    // de segurança de telecloud.jks: sem ela não dá para publicar atualizações). Sem o arquivo, o APK de
+    // lançamento sai sem assinatura.
+    val chavesLancamento = Properties().apply {
+        val arquivo = file("C:/android/keys/telecloud.properties")
+        if (arquivo.exists()) arquivo.inputStream().use { load(it) }
+    }
+    signingConfigs {
+        if (chavesLancamento.isNotEmpty()) {
+            create("lancamento") {
+                storeFile = file(chavesLancamento.getProperty("storeFile"))
+                storePassword = chavesLancamento.getProperty("storePassword")
+                keyAlias = chavesLancamento.getProperty("keyAlias")
+                keyPassword = chavesLancamento.getProperty("keyPassword")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfigs.findByName("lancamento")?.let { signingConfig = it }
+        }
     }
 
     // A TDLib vem do fluxo de trabalho "TDLib para Android" (pasta ignorada pelo git).

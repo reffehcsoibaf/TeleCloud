@@ -1,0 +1,16 @@
+{
+  // Worker do site do TeleCloud. Publicado pela Cloudflare (Workers Builds) a cada push no ramo main.
+  "name": "telecloud",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-11-01",
+  "preview_urls": false,
+  "assets": {
+    "directory": "./site",
+    "binding": "ASSETS",
+    // O Worker responde primeiro nestes caminhos; o resto é a página estática.
+    "run_worker_first": ["/baixar/*", "/versao.json"]
+  },
+  "vars": {
+    "REPOSITORIO": "reffehcsoibaf/TeleCloud"
+  }
+}

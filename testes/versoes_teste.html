@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Teste de worker/versoes.js</title>
+<pre id="saida">rodando…</pre>
+<script type="module">
+// Rode com:  msedge --headless=new --allow-file-access-from-files --virtual-time-budget=3000 --dump-dom file:///.../testes/versoes_teste.html
+import { chaveDe, maior, maisNova } from "../worker/versoes.js";
+
+const falhas = [];
+let total = 0;
+function igual(nome, obtido, esperado) {
+  total++;
+  const a = JSON.stringify(obtido), b = JSON.stringify(esperado);
+  if (a !== b) falhas.push(`${nome}: obtido ${a}, esperado ${b}`);
+}
+const rel = (tag, assets = [], extra = {}) => ({ tag_name: tag, html_url: "P-" + tag, assets, ...extra });
+const exe = (url = "E", size = 1) => ({ name: "TeleCloud.exe", browser_download_url: url, size });
+const apk = (url = "A", size = 1) => ({ name: "TeleCloud.apk", browser_download_url: url, size });
+
+igual("tag com 3 números vale .0", chaveDe(rel("v2026.11.9")).chave, [2026, 11, 9, 0]);
+igual("tag com 4 números", chaveDe(rel("v2026.11.20.1")).chave, [2026, 11, 20, 1]);
+igual("rascunho não conta", chaveDe(rel("v2026.11.20.1", [], { draft: true })), null);
+igual("tag fora do padrão", chaveDe(rel("beta")), null);
+igual("maior por dígito", maior([2026, 11, 20, 10], [2026, 11, 20, 9]), true);
+igual("2026.11.9 < 2026.11.9.1", maior([2026, 11, 9, 0], [2026, 11, 9, 1]), false);
+
+const lista = [
+  rel("v2026.11.20.1", [exe("E1", 49)]),
+  rel("v2026.11.22.3", [exe("E3", 50), apk("A3", 65)]),
+  rel("v2026.11.23.0", [exe("E4", 51)]),                       // mais nova, mas sem APK
+  rel("v2026.11.24.0", [exe("E5", 52), apk("A5", 66)], { draft: true }), // rascunho: ignorada
+];
+igual("windows pega a mais nova com .exe", maisNova(lista, "TeleCloud.exe").url, "E4");
+igual("android pega a mais nova com .apk", maisNova(lista, "TeleCloud.apk").url, "A3");
+igual("android traz versão e tamanho", maisNova(lista, "TeleCloud.apk"),
+  { versao: "2026.11.22.3", url: "A3", tamanho: 65, pagina: "P-v2026.11.22.3" });
+igual("sem nenhum APK", maisNova([rel("v2026.11.20.1", [exe()])], "TeleCloud.apk"), null);
+igual("lista vazia", maisNova([], "TeleCloud.exe"), null);
+igual("lista indefinida", maisNova(undefined, "TeleCloud.exe"), null);
+
+document.getElementById("saida").textContent =
+  falhas.length ? "RESULTADO: FALHOU\n" + falhas.join("\n") : `RESULTADO: OK (${total} verificações)`;
+</script>

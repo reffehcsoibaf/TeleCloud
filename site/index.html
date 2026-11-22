@@ -85,7 +85,7 @@ footer { border-top: 1px solid var(--linha); margin-top: 3rem; padding: 1.5rem 0
   <section aria-labelledby="baixar">
     <h2 id="baixar">Baixar</h2>
     <div class="baixar">
-      <a class="botao" id="botao-baixar" href="https://github.com/reffehcsoibaf/TeleCloud/releases">Baixar o TeleCloud</a>
+      <a class="botao" id="botao-baixar" href="/baixar/windows">Baixar o TeleCloud</a>
       <a class="botao secundario" href="https://github.com/reffehcsoibaf/TeleCloud/releases">Todas as versões</a>
       <a class="botao secundario" href="#android">Aplicativo para Android</a>
     </div>
@@ -111,7 +111,7 @@ footer { border-top: 1px solid var(--linha); margin-top: 3rem; padding: 1.5rem 0
     <h2 id="android">Aplicativo para Android</h2>
     <p>O mesmo TeleCloud no celular. Ele mostra as pastas guardadas no Telegram, baixa e envia arquivos, recebe arquivos pelo "Compartilhar" de outros aplicativos (como o WhatsApp) e aparece também no aplicativo Arquivos do Android. Usa o mesmo grupo e o mesmo índice do Windows: o que muda de um lado aparece no outro em poucos segundos. Feito para uso com o TalkBack.</p>
     <div class="baixar">
-      <a class="botao" id="botao-android" href="https://github.com/reffehcsoibaf/TeleCloud/releases">Baixar o app para Android</a>
+      <a class="botao" id="botao-android" href="/baixar/android">Baixar o app para Android</a>
     </div>
     <p class="nota" id="versao-android" role="status">Para Android 8 ou mais novo. Gratuito, sem anúncios. Não está na Play Store: o Android pede permissão para instalar o arquivo baixado.</p>
     <h3>Como instalar e usar no celular</h3>
@@ -151,60 +151,25 @@ footer { border-top: 1px solid var(--linha); margin-top: 3rem; padding: 1.5rem 0
   </div>
 </footer>
 <script>
-// Aponta os botões para os arquivos da versão mais nova: o TeleCloud.exe (Windows) e o TeleCloud.apk (Android).
-// Sem JavaScript ou sem resposta do GitHub, os botões levam à lista de versões.
+// Mostra a versão e o tamanho dos arquivos mais novos. Os botões já funcionam sem isto: /baixar/windows e
+// /baixar/android levam sempre à versão mais nova (e à lista de versões, se ainda não houver o arquivo).
 (function () {
   var botao = document.getElementById("botao-baixar");
   var aviso = document.getElementById("versao");
   var botaoAndroid = document.getElementById("botao-android");
   var avisoAndroid = document.getElementById("versao-android");
-
-  // "2026.11.9" vale "2026.11.9.0"; tag fora do padrão ou rascunho não conta.
-  function chaveDe(r) {
-    var v = String(r.tag_name || "").replace(/^[vV]/, "");
-    if (r.draft || !/^\d{4}\.\d{1,2}\.\d{1,2}(\.\d{1,3})?$/.test(v)) { return null; }
-    var k = v.split(".").map(Number);
-    if (k.length < 4) { k.push(0); }
-    return { v: v, k: k };
-  }
-  function maior(a, b) {
-    for (var i = 0; i < 4; i++) { if (a[i] !== b[i]) { return a[i] > b[i]; } }
-    return false;
-  }
-  function arquivo(r, nome) {
-    return (r.assets || []).filter(function (a) { return a.name === nome; })[0];
-  }
-  // A versão mais nova; com `nome`, só entre as que têm esse arquivo.
-  function maisNova(lista, nome) {
-    var melhor = null;
-    lista.forEach(function (r) {
-      var c = chaveDe(r);
-      if (!c || (nome && !arquivo(r, nome))) { return; }
-      if (!melhor || maior(c.k, melhor.k)) { melhor = { v: c.v, k: c.k, r: r }; }
-    });
-    return melhor;
-  }
-
-  fetch("https://api.github.com/repos/reffehcsoibaf/TeleCloud/releases?per_page=30",
-        { headers: { Accept: "application/vnd.github+json" } })
+  fetch("/versao.json")
     .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
-    .then(function (lista) {
-      var win = maisNova(lista, null);
-      if (win) {
-        var exe = arquivo(win.r, "TeleCloud.exe");
-        botao.textContent = "Baixar o TeleCloud " + win.v;
-        botao.href = exe ? exe.browser_download_url : win.r.html_url;
-        aviso.textContent = "Versão mais recente: " + win.v +
-          (exe ? ", " + Math.round(exe.size / 1048576) + " MB" : "") +
-          ". Para Windows 10 ou 11. Gratuito, sem anúncios.";
+    .then(function (v) {
+      if (v.windows) {
+        botao.textContent = "Baixar o TeleCloud " + v.windows.versao;
+        aviso.textContent = "Versão mais recente: " + v.windows.versao + ", " +
+          Math.round(v.windows.tamanho / 1048576) + " MB. Para Windows 10 ou 11. Gratuito, sem anúncios.";
       }
-      var droid = maisNova(lista, "TeleCloud.apk");
-      if (droid) {
-        var apk = arquivo(droid.r, "TeleCloud.apk");
-        botaoAndroid.textContent = "Baixar o app para Android " + droid.v;
-        botaoAndroid.href = apk.browser_download_url;
-        avisoAndroid.textContent = "Versão mais recente do app: " + droid.v + ", " +
-          Math.round(apk.size / 1048576) + " MB. Para Android 8 ou mais novo. Gratuito, sem anúncios. " +
+      if (v.android) {
+        botaoAndroid.textContent = "Baixar o app para Android " + v.android.versao;
+        avisoAndroid.textContent = "Versão mais recente do app: " + v.android.versao + ", " +
+          Math.round(v.android.tamanho / 1048576) + " MB. Para Android 8 ou mais novo. Gratuito, sem anúncios. " +
           "Não está na Play Store: o Android pede permissão para instalar o arquivo baixado.";
       }
     })
