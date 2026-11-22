@@ -11,7 +11,7 @@ Os arquivos ficam como anexos da versão no GitHub; a página do TeleCloud acha 
 | Versão do Android | `versionName` e `versionCode` em `android/app/build.gradle.kts` |
 | Histórico | `CHANGELOG.md` (seção `## Não lançado`) |
 | Script | `ferramentas/lancar.py`, chamado por `ferramentas/lancar.cmd` |
-| Chave de assinatura do APK | `C:\android\keys\telecloud.jks` + `telecloud.properties` (fora do git) |
+| Chave de assinatura do APK | `C:\android\keys\TeleCloud\telecloud.jks` + `telecloud.properties` (fora do git) |
 | Site e links fixos | `wrangler.jsonc`, `worker/`, `site/` (Worker `telecloud` na Cloudflare) |
 
 ## Passo a passo

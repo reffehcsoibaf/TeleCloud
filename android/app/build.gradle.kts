@@ -36,11 +36,11 @@ android {
         buildConfigField("String", "API_HASH", "\"$chaveHash\"")
     }
 
-    // A chave de lançamento do TeleCloud fica fora do repositório (C:\android\keys\telecloud.properties; faça cópia
+    // A chave de lançamento do TeleCloud fica fora do repositório (C:\android\keys\TeleCloud\telecloud.properties; faça cópia
     // de segurança de telecloud.jks: sem ela não dá para publicar atualizações). Sem o arquivo, o APK de
     // lançamento sai sem assinatura.
     val chavesLancamento = Properties().apply {
-        val arquivo = file("C:/android/keys/telecloud.properties")
+        val arquivo = file("C:/android/keys/TeleCloud/telecloud.properties")
         if (arquivo.exists()) arquivo.inputStream().use { load(it) }
     }
     signingConfigs {

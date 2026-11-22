@@ -157,7 +157,7 @@ def principal() -> int:
     cert = saida(["cmd", "/c", str(apksigner), "verify", "--print-certs", str(apk)])
     m = re.search(r"Signer #1 certificate SHA-256 digest: ([0-9a-f]+)", cert)
     if not m or m.group(1) != IMPRESSAO_ESPERADA:
-        raise ErroLancamento("O APK não está assinado com a chave do TeleCloud (C:\\android\\keys\\telecloud.properties).")
+        raise ErroLancamento("O APK não está assinado com a chave do TeleCloud (C:\\android\\keys\\TeleCloud\\telecloud.properties).")
 
     notas_completas = (
         f"{notas}\n\n### Arquivos\n"
