@@ -10,6 +10,7 @@
     <application
         android:name=".TeleCloudApp"
         android:allowBackup="false"
+        android:icon="@drawable/ic_nuvem"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.TeleCloud">
@@ -31,6 +32,17 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+        <!-- O TeleCloud dentro do app Arquivos (provedor de documentos). -->
+        <provider
+            android:name=".TeleCloudProvider"
+            android:authorities="br.com.fabioscheffer.telecloud.documentos"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
         <service
             android:name=".TransferenciaService"
             android:exported="false"

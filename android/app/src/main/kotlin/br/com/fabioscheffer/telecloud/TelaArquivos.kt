@@ -23,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -42,6 +43,7 @@ private enum class Acao { Nenhuma, Renomear, Apagar }
 @Composable
 fun TelaArquivos(nuvem: Nuvem) {
     val e by nuvem.estado.collectAsState()
+    val contexto = LocalContext.current
     LaunchedEffect(Unit) { nuvem.carregar() }
     val msg by nuvem.transferencia.collectAsState()
     var escolhido by remember { mutableStateOf<No?>(null) }
@@ -118,6 +120,9 @@ fun TelaArquivos(nuvem: Nuvem) {
             }
             Button(onClick = { nuvem.atualizar() }, modifier = Modifier.heightIn(min = 48.dp)) {
                 Text("Atualizar a lista")
+            }
+            Button(onClick = { abrirNoGerenciador(contexto, nuvem) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text("Ver o TeleCloud no gerenciador de arquivos do Android")
             }
             if (recebidos.isNotEmpty()) {
                 Button(
@@ -234,6 +239,27 @@ fun TelaArquivos(nuvem: Nuvem) {
         }
         Text("Versão ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
     }
+}
+
+/**
+ * Abre a raiz do TeleCloud (provedor de documentos) no gerenciador de arquivos do sistema. O gerenciador da
+ * Xiaomi não lista provedores de outros apps; o do Google (documentsui) lista.
+ */
+private fun abrirNoGerenciador(ctx: android.content.Context, nuvem: Nuvem) {
+    val raiz = android.provider.DocumentsContract.buildRootUri(TeleCloudProvider.AUTORIDADE, "raiz")
+    for (pacote in listOf("com.google.android.documentsui", "com.android.documentsui", null)) {
+        val i = android.content.Intent(android.content.Intent.ACTION_VIEW)
+            .setDataAndType(raiz, "vnd.android.document/root")
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (pacote != null) i.setPackage(pacote)
+        try {
+            ctx.startActivity(i)
+            return
+        } catch (e: android.content.ActivityNotFoundException) {
+            // tenta o próximo
+        }
+    }
+    nuvem.avisar("Este aparelho não tem um gerenciador de arquivos que mostre o TeleCloud.")
 }
 
 /** Campo de nome com o foco já nele, seguido do botão de confirmar. */

@@ -127,6 +127,23 @@ class Indice(private val arquivo: File) {
         return n
     }
 
+    fun obter(id: Long): No? =
+        bd.rawQuery("SELECT id, nome, pasta, tamanho, modificado FROM nos WHERE id = ?", arrayOf(id.toString())).use { c ->
+            if (c.moveToFirst()) No(c.getLong(0), c.getString(1), c.getInt(2) != 0, c.getLong(3), c.getDouble(4)) else null
+        }
+
+    fun paiDe(id: Long): Long? =
+        bd.rawQuery("SELECT pai FROM nos WHERE id = ?", arrayOf(id.toString())).use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null
+        }
+
+    /** Ids de todas as pastas (para avisar o app Arquivos de que o conteúdo mudou). */
+    fun pastas(): List<Long> {
+        val r = ArrayList<Long>()
+        bd.rawQuery("SELECT id FROM nos WHERE pasta = 1", null).use { c -> while (c.moveToNext()) r += c.getLong(0) }
+        return r
+    }
+
     fun existe(id: Long): Boolean =
         bd.rawQuery("SELECT 1 FROM nos WHERE id = ?", arrayOf(id.toString())).use { it.moveToFirst() }
 

@@ -7,6 +7,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -86,6 +89,12 @@ data class EstadoNuvem(
 )
 
 class Nuvem(private val td: Td, private val ctx: Context) {
+    val contexto: Context get() = ctx
+
+    /** Mostra uma mensagem na região de avisos da tela. */
+    fun avisar(texto: String) {
+        _transferencia.value = texto
+    }
     private val escopo = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val trava = Mutex() // uma operação de transferência por vez: o índice é um arquivo só
     private var indice: Indice? = null
@@ -150,6 +159,7 @@ class Nuvem(private val td: Td, private val ctx: Context) {
                 indice = idx
                 _estado.value = EstadoNuvem(itens = idx.listar(RAIZ), pronto = true)
                 vigiar()
+                avisarProvedor(idx)
             } catch (e: Exception) {
                 Registro.erro(ctx, "carregar índice", e)
                 _estado.value = EstadoNuvem(erro = e.message ?: e.toString())
@@ -180,6 +190,7 @@ class Nuvem(private val td: Td, private val ctx: Context) {
                     _estado.value = EstadoNuvem(
                         caminho = caminho, itens = idx.listar(caminho.lastOrNull()?.id ?: RAIZ), pronto = true,
                     )
+                    avisarProvedor(idx)
                     val mudancas = if (mapaAntes == null) "" else descreverMudancas(mapaAntes, withContext(Dispatchers.IO) { idx.mapa() })
                     // Só anuncia o que de fato mudou; atualização automática sem mudança fica em silêncio.
                     if (mudancas.isNotEmpty()) {
@@ -306,6 +317,62 @@ class Nuvem(private val td: Td, private val ctx: Context) {
         ctx.contentResolver.update(uri, v, null, null)
     }
 
+    // ---------- provedor de documentos (o TeleCloud dentro do app Arquivos) ----------
+
+    /**
+     * Índice pronto para o provedor de documentos, que roda em outra thread e pode ser chamado com o app fechado:
+     * liga a TDLib, espera o login e carrega o índice. Devolve null se não houver login ou der tempo esgotado.
+     */
+    fun indiceParaProvedor(): Indice? = runBlocking(Dispatchers.IO) {
+        td.iniciar()
+        withTimeoutOrNull(30_000) { td.etapa.first { it != Etapa.Iniciando } }
+        if (td.etapa.value != Etapa.Pronto) return@runBlocking null
+        if (indice == null) {
+            carregar()
+            withTimeoutOrNull(90_000) { estado.first { !it.carregando && (it.pronto || it.erro != null) } }
+        }
+        indice
+    }
+
+    private val arquivosDasPartes = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    /** Lê até [quer] bytes da parte [parte], a partir de [dentro]: baixa a parte inteira pela TDLib (uma vez) e lê do cache. */
+    suspend fun lerDaParte(parte: Parte, dentro: Long, destino: ByteArray, posDestino: Int, quer: Int, usados: MutableSet<Int>): Int {
+        val id = arquivosDasPartes[parte.ref] ?: run {
+            val msg = td.chamar(TdApi.GetMessage(grupo, idDaTdlib(parte.ref)))
+            val c = msg.content as? TdApi.MessageDocument ?: throw IllegalStateException("A parte não tem arquivo.")
+            c.document.document.id.also { arquivosDasPartes[parte.ref] = it }
+        }
+        usados += id
+        val f = td.chamar(TdApi.DownloadFile(id, 16, 0, 0, true))
+        if (!f.local.isDownloadingCompleted) throw IllegalStateException("Download da parte incompleto.")
+        var lido = 0
+        java.io.RandomAccessFile(f.local.path, "r").use { r ->
+            r.seek(dentro)
+            while (lido < quer) {
+                val n = r.read(destino, posDestino + lido, quer - lido)
+                if (n < 0) break
+                lido += n
+            }
+        }
+        return lido
+    }
+
+    /** Libera o cache da TDLib das partes lidas pelo provedor (o app Arquivos terminou de usar o arquivo). */
+    suspend fun liberarPartes(ids: Set<Int>) {
+        for (id in ids) runCatching { td.chamar(TdApi.DeleteFile(id)) }
+    }
+
+    /** Avisa o app Arquivos de que o conteúdo das pastas pode ter mudado. */
+    private fun avisarProvedor(idx: Indice) {
+        runCatching {
+            val r = ctx.contentResolver
+            for (id in idx.pastas().take(3000)) {
+                r.notifyChange(android.provider.DocumentsContract.buildChildDocumentsUri(TeleCloudProvider.AUTORIDADE, "n:$id"), null)
+            }
+        }
+    }
+
     // ---------- organizar: nova pasta, renomear, apagar ----------
 
     fun criarPasta(nome: String) = organizar("Criando a pasta $nome…", "Pasta ${nome.trim()} criada.") { idx, pai ->
@@ -349,6 +416,7 @@ class Nuvem(private val td: Td, private val ctx: Context) {
                         runCatching { td.chamar(TdApi.DeleteMessages(grupo, refs.map { idDaTdlib(it) }.toLongArray(), true)) }
                     }
                     _estado.value = _estado.value.copy(caminho = pastas, itens = idx.listar(pai))
+                    avisarProvedor(idx)
                     _transferencia.value = pronto
                 } catch (e: Exception) {
                     Registro.erro(ctx, fazendo, e)
