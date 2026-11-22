@@ -63,3 +63,37 @@ def test_mesclar_ignora_envio_pendente_local():
     time.sleep(1.1)
     _com_arquivo(cel, RAIZ, "y.bin", ["7"])
     assert pc.mesclar(cel.exportar()) == (0, [])
+
+
+def test_linhagem_publicar_cria_geracao_filha():
+    from telecloud.indice import Indice
+    ix = Indice()
+    assert ix.geracao() == ""
+    g1 = ix.preparar_publicacao()
+    assert ix.geracao() == g1 and Indice.linhagem(ix.exportar()) == (g1, "")
+    g2 = ix.preparar_publicacao()
+    assert g2 != g1 and Indice.linhagem(ix.exportar()) == (g2, g1)
+
+
+def test_substituir_adota_apagar_e_renomear_de_outro_aparelho():
+    from telecloud.indice import Indice, RAIZ
+    pc = Indice()
+    _com_arquivo(pc, RAIZ, "velho.bin", ["1"])
+    _com_arquivo(pc, RAIZ, "fica.bin", ["2"])
+    pc.preparar_publicacao()
+    copia_pc = pc.exportar()
+    # o "celular" parte da cópia do PC, apaga um arquivo e renomeia outro
+    cel = Indice()
+    cel.substituir(copia_pc)
+    cel.remover(cel.resolver("velho.bin").id)
+    cel.renomear(cel.resolver("fica.bin").id, RAIZ, "novo_nome.bin")
+    cel.preparar_publicacao()
+    copia_cel = cel.exportar()
+    ger, pai = Indice.linhagem(copia_cel)
+    assert pai == pc.geracao()                      # filha direta da versão do PC
+    n = pc.mudancas
+    pc.substituir(copia_cel)
+    assert pc.mudancas == n                         # adotar não conta como mudança local
+    assert pc.geracao() == ger
+    assert pc.resolver("velho.bin") is None and pc.resolver("fica.bin") is None
+    assert [p.ref for p in pc.partes(pc.resolver("novo_nome.bin").id)] == ["2"]

@@ -52,6 +52,7 @@ class Indice:
                 PRIMARY KEY(no, seq)
             );
             CREATE TABLE IF NOT EXISTS apagar_pendentes(ref TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS meta(chave TEXT PRIMARY KEY, valor TEXT NOT NULL);
             """
         )
         self.bd.execute(
@@ -218,6 +219,74 @@ class Indice:
         import zlib
         with open(caminho, "wb") as f:
             f.write(zlib.decompress(copia))
+
+    # --- linhagem: dois aparelhos (PC e celular) editando o mesmo índice sem se atropelar ---
+    # Cada publicação grava `geracao` (identificador novo) e `pai` (a geração em que ela se baseou). Quem recebe
+    # uma cópia cujo `pai` é a sua geração atual, e não mexeu em nada desde então, pode adotá-la inteira: assim
+    # apagar e renomear no celular valem no PC. Fora disso, só dá para mesclar o que é novo (`mesclar`).
+    def _meta(self, chave: str) -> str:
+        l = self.bd.execute("SELECT valor FROM meta WHERE chave=?", (chave,)).fetchone()
+        return l[0] if l else ""
+
+    def _definir_meta(self, chave: str, valor: str):
+        self.bd.execute("INSERT OR REPLACE INTO meta(chave,valor) VALUES(?,?)", (chave, valor))
+        self.bd.commit()
+
+    def geracao(self) -> str:
+        with self._trava:
+            return self._meta("geracao")
+
+    def preparar_publicacao(self) -> str:
+        """Chamar logo antes de exportar: marca a cópia com uma geração nova, filha da geração atual."""
+        import uuid
+        with self._trava:
+            base, nova = self._meta("geracao"), uuid.uuid4().hex
+            self._definir_meta("pai", base)
+            self._definir_meta("geracao", nova)
+            return nova
+
+    @staticmethod
+    def linhagem(copia: bytes) -> tuple[str, str]:
+        """(geração, pai) gravados numa cópia do índice; ('', '') se ela não tem linhagem (versão antiga)."""
+        import zlib
+        remoto = sqlite3.connect(":memory:")
+        try:
+            remoto.deserialize(zlib.decompress(copia))
+            m = dict(remoto.execute("SELECT chave,valor FROM meta"))
+            return m.get("geracao", ""), m.get("pai", "")
+        except sqlite3.Error:
+            return "", ""
+        finally:
+            remoto.close()
+
+    def substituir(self, copia: bytes):
+        """Troca todo o conteúdo pelo da cópia (ver `linhagem`). Não conta como mudança local."""
+        import zlib
+        remoto = sqlite3.connect(":memory:")
+        try:
+            remoto.deserialize(zlib.decompress(copia))
+            nos = list(remoto.execute("SELECT id,pai,nome,pasta,tamanho,modificado,tags FROM nos"))
+            partes = list(remoto.execute("SELECT no,seq,ref,tamanho FROM partes"))
+            try:
+                meta = list(remoto.execute("SELECT chave,valor FROM meta"))
+            except sqlite3.Error:
+                meta = []
+        finally:
+            remoto.close()
+        with self._trava:
+            self.bd.execute("BEGIN")
+            try:
+                self.bd.execute("PRAGMA defer_foreign_keys=ON")
+                self.bd.execute("DELETE FROM partes")
+                self.bd.execute("DELETE FROM nos")
+                self.bd.executemany("INSERT INTO nos(id,pai,nome,pasta,tamanho,modificado,tags) VALUES(?,?,?,?,?,?,?)", nos)
+                self.bd.executemany("INSERT INTO partes(no,seq,ref,tamanho) VALUES(?,?,?,?)", partes)
+                self.bd.execute("DELETE FROM meta")
+                self.bd.executemany("INSERT INTO meta(chave,valor) VALUES(?,?)", meta)
+                self.bd.execute("COMMIT")
+            except Exception:
+                self.bd.execute("ROLLBACK")
+                raise
 
     def mesclar(self, copia: bytes, desde: float = 0.0) -> tuple[int, list[str]]:
         """Incorpora ao índice local o que existe só na cópia remota (feita por outro aparelho, como o celular).

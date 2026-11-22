@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import winfsp as w
 from .nuvem import Nuvem
-from .indice import RAIZ
+from .indice import RAIZ, Indice
 
 log = logging.getLogger("telecloud")
 LIMITE_PEQUENO = 8 * 1024 * 1024   # arquivos até este tamanho sofrem a pausa entre envios
@@ -131,6 +131,8 @@ class Unidade:
         self.dll = w._carregar()
         self._parar = False
         self._visto = self.ix.mudancas
+        if not self.ix.geracao():
+            self._visto = -1   # índice sem linhagem (versão antiga): publica uma vez para o celular ter uma base
         self._mudou_em = time.time()
         self._ultimo_visto_mudanca = self.ix.mudancas
         self._tentou_indice = 0.0
@@ -290,6 +292,21 @@ class Unidade:
         id_, copia = self.nuvem.arm.indice_remoto(self._indice_id)
         if id_ is None or copia is None:
             return 0
+        geracao, pai = Indice.linhagem(copia)
+        if geracao and geracao == self.ix.geracao():
+            self._indice_id = id_   # é a cópia que este PC mesmo publicou
+            return 0
+        sem_pendencias = (self.ix.mudancas == self._visto and not self.ix.pendentes_de_envio()
+                          and not any(e.sujo for e in list(self.estados.values())))
+        if pai and pai == self.ix.geracao() and sem_pendencias:
+            # A cópia nasceu da última versão que este PC publicou e o PC não mexeu em nada desde então:
+            # adota inteira (assim o que o celular apagou ou renomeou também vale aqui).
+            self.ix.substituir(copia)
+            self._visto = self.ix.mudancas
+            self._indice_id = id_
+            self._marcar_sincronia()
+            log.info("índice: cópia de outro aparelho adotada por inteiro")
+            return 1
         mudou, antigas = self.ix.mesclar(copia, self._ultima_sincronia)
         self._indice_id = id_
         self._marcar_sincronia()
@@ -380,6 +397,7 @@ class Unidade:
             # Antes de publicar, incorpora o que outro aparelho gravou; senão a cópia dele seria apagada.
             self.sincronizar_indice()
             alvo = self.ix.mudancas
+            self.ix.preparar_publicacao()
             self._indice_id = self.nuvem.arm.salvar_indice(self.ix.exportar())
             self._marcar_sincronia()
         except Exception:

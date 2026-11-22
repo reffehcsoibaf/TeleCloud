@@ -178,3 +178,47 @@ def test_limpar_cache_a_pedido_apaga_tudo_que_ja_esta_no_telegram(tmp_path):
         assert not (un.cache_dir / f"{no.id}.bin").exists() and not (un.cache_dir / f"{no.id}.ok").exists()
     finally:
         un.parar()
+
+
+def _publicar_do_celular(arm, base_copia, alterar):
+    """Simula o celular: parte da cópia do PC, altera e publica uma cópia filha no armazenamento."""
+    cel = Indice()
+    cel.substituir(base_copia)
+    alterar(cel)
+    cel.preparar_publicacao()
+    arm.salvar_indice(cel.exportar())
+
+
+def test_unidade_adota_copia_do_celular_quando_pc_nao_mexeu(tmp_path):
+    un, nuvem, arm = _unidade(tmp_path, silencio_indice=0.2)
+    try:
+        nuvem.criar_pasta("Docs")
+        nuvem.gravar("Docs/a.txt", b"abc")
+        assert un.salvar_indice_agora()
+        base = arm.copia_indice
+        _publicar_do_celular(arm, base, lambda c: c.remover(c.resolver("Docs/a.txt").id))
+        assert un.sincronizar_indice() == 1
+        assert nuvem.indice.resolver("Docs/a.txt") is None     # a exclusão do celular valeu no PC
+        assert nuvem.indice.resolver("Docs") is not None
+    finally:
+        un.parar()
+
+
+def test_unidade_so_mescla_quando_pc_tem_mudanca_nao_publicada(tmp_path):
+    un, nuvem, arm = _unidade(tmp_path, silencio_indice=60)    # não publica sozinho durante o teste
+    try:
+        nuvem.criar_pasta("Docs")
+        nuvem.gravar("Docs/a.txt", b"abc")
+        assert un.salvar_indice_agora()
+        base = arm.copia_indice
+        nuvem.criar_pasta("SoDoPC")                              # mudança local ainda não publicada
+        def celular(c):
+            c.remover(c.resolver("Docs/a.txt").id)
+            c.criar(RAIZ, "SoDoCelular", True)
+        _publicar_do_celular(arm, base, celular)
+        un.sincronizar_indice()
+        assert nuvem.indice.resolver("SoDoPC") is not None       # nada do PC se perdeu
+        assert nuvem.indice.resolver("SoDoCelular") is not None  # o novo do celular entrou (mescla)
+        assert nuvem.indice.resolver("Docs/a.txt") is not None   # a exclusão não vale na mescla (limitação conhecida)
+    finally:
+        un.parar()
