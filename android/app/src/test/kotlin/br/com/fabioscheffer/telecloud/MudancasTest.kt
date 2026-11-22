@@ -37,4 +37,31 @@ class MudancasTest {
         val t = descreverMudancas(emptyMap(), depois)
         assertTrue(t, t.endsWith("E mais 3 mudança(s)"))
     }
+
+    @Test
+    fun pastaRenomeadaNaoListaOsArquivosDeDentro() {
+        val antes = mapOf(
+            "Velha" to pasta, "Velha/a.zip" to arq(5), "Velha/sub" to pasta, "Velha/sub/b.zip" to arq(6), "Outra" to pasta,
+        )
+        val depois = mapOf(
+            "Nova" to pasta, "Nova/a.zip" to arq(5), "Nova/sub" to pasta, "Nova/sub/b.zip" to arq(6), "Outra" to pasta,
+        )
+        assertEquals("Pasta Velha renomeada para Nova", descreverMudancas(antes, depois))
+    }
+
+    @Test
+    fun arquivoRenomeadoNaMesmaPasta() {
+        val antes = mapOf("P" to pasta, "P/x.bin" to arq(7, 3))
+        val depois = mapOf("P" to pasta, "P/y.bin" to arq(7, 3))
+        assertEquals("x.bin renomeado para y.bin", descreverMudancas(antes, depois))
+    }
+
+    @Test
+    fun pastaRenomeadaMaisArquivoNovoDentro() {
+        val antes = mapOf("A" to pasta, "A/f.bin" to arq(1))
+        val depois = mapOf("B" to pasta, "B/f.bin" to arq(1), "B/g.bin" to arq(2))
+        val t = descreverMudancas(antes, depois)
+        // Conteúdo diferente: não é possível afirmar que foi só renomeação; não pode sumir nada em silêncio.
+        assertTrue(t, t.isNotEmpty())
+    }
 }

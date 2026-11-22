@@ -7,6 +7,7 @@ import java.util.zip.Deflater
 import java.util.zip.DeflaterOutputStream
 
 const val RAIZ = 1L
+private const val PROIBIDOS = "\\/:*?\"<>|"
 
 /** Pasta ou arquivo do índice (mesma tabela `nos` do TeleCloud do Windows). */
 data class No(val id: Long, val nome: String, val pasta: Boolean, val tamanho: Long, val modificado: Double)
@@ -19,6 +20,10 @@ data class Assinatura(val pasta: Boolean, val tamanho: Long, val modificado: Lon
 /** Índice SQLite que o TeleCloud do Windows guarda no grupo do Telegram (tabelas `nos` e `partes`). */
 class Indice(private val arquivo: File) {
     private var bd = abrir()
+
+    init {
+        bd.execSQL("CREATE TABLE IF NOT EXISTS meta(chave TEXT PRIMARY KEY, valor TEXT NOT NULL)")
+    }
 
     private fun abrir() = SQLiteDatabase.openDatabase(arquivo.path, null, SQLiteDatabase.OPEN_READWRITE)
 
@@ -59,6 +64,67 @@ class Indice(private val arquivo: File) {
         val saida = HashMap<String, Assinatura>()
         for ((id, n) in linhas) if (n.pai != null) saida[caminho(id)] = n.a
         return saida
+    }
+
+    private fun filho(pai: Long, nome: String): No? = listar(pai).firstOrNull { it.nome.equals(nome, ignoreCase = true) }
+
+    /** Item de nome [nome] dentro da pasta [pai] (ignora maiúsculas, como o Windows). */
+    fun filhoPorNome(pai: Long, nome: String): No? = filho(pai, nome)
+
+    /** Resolve uma lista de nomes de pastas ("Backups", "2026") a partir da raiz; vazia = a raiz. */
+    fun resolverPastas(nomes: List<String>): List<No>? {
+        val r = ArrayList<No>()
+        var atual = RAIZ
+        for (n in nomes) {
+            val f = filho(atual, n)?.takeIf { it.pasta } ?: return null
+            r += f
+            atual = f.id
+        }
+        return r
+    }
+
+    fun criarPasta(pai: Long, nome: String): No {
+        val n = validarNome(nome)
+        if (filho(pai, n) != null) throw IllegalStateException("Já existe \"$n\" nesta pasta.")
+        bd.execSQL(
+            "INSERT INTO nos(pai, nome, pasta, tamanho, modificado) VALUES(?,?,1,0,?)",
+            arrayOf<Any>(pai, n, System.currentTimeMillis() / 1000.0),
+        )
+        return filho(pai, n)!!
+    }
+
+    /** Renomeia dentro da mesma pasta (no índice, como no Windows; nada é reenviado). */
+    fun renomear(no: No, pai: Long, novoNome: String) {
+        val n = validarNome(novoNome)
+        val outro = filho(pai, n)
+        if (outro != null && outro.id != no.id) throw IllegalStateException("Já existe \"$n\" nesta pasta.")
+        bd.execSQL("UPDATE nos SET nome = ? WHERE id = ?", arrayOf<Any>(n, no.id))
+    }
+
+    /** Remove o item do índice e devolve as referências das partes, para apagar do Telegram depois. */
+    fun apagar(no: No): List<String> {
+        if (no.pasta && listar(no.id).isNotEmpty()) throw IllegalStateException("A pasta \"${no.nome}\" não está vazia.")
+        val refs = partes(no.id).map { it.ref }
+        bd.beginTransaction()
+        try {
+            bd.execSQL("DELETE FROM partes WHERE no = ?", arrayOf<Any>(no.id))
+            bd.execSQL("DELETE FROM nos WHERE id = ?", arrayOf<Any>(no.id))
+            bd.setTransactionSuccessful()
+        } finally {
+            bd.endTransaction()
+        }
+        return refs
+    }
+
+    /** Mesmas restrições do Windows: sem barras, dois-pontos, asterisco, interrogação, aspas, menor, maior e barra vertical. */
+    private fun validarNome(nome: String): String {
+        val n = nome.trim()
+        if (n.isEmpty()) throw IllegalStateException("O nome não pode ficar em branco.")
+        if (n.length > 255) throw IllegalStateException("Nome muito longo.")
+        if (n.any { it in PROIBIDOS }) {
+            throw IllegalStateException("O nome não pode ter barras, dois-pontos, asterisco, interrogação, aspas, < > ou |.")
+        }
+        return n
     }
 
     fun existe(id: Long): Boolean =
@@ -112,8 +178,18 @@ class Indice(private val arquivo: File) {
         return antigas
     }
 
+    private fun meta(chave: String): String =
+        bd.rawQuery("SELECT valor FROM meta WHERE chave = ?", arrayOf(chave)).use { if (it.moveToFirst()) it.getString(0) else "" }
+
+    private fun definirMeta(chave: String, valor: String) =
+        bd.execSQL("INSERT OR REPLACE INTO meta(chave, valor) VALUES(?, ?)", arrayOf<Any>(chave, valor))
+
     /** Cópia do índice para o Telegram: zlib sobre o arquivo SQLite, igual ao `exportar` do Windows. */
     fun exportar(): ByteArray {
+        // Linhagem: esta cópia nasce da geração que foi baixada (o PC reconhece e adota a cópia inteira).
+        val base = meta("geracao")
+        definirMeta("pai", base)
+        definirMeta("geracao", java.util.UUID.randomUUID().toString().replace("-", ""))
         bd.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { it.moveToFirst() }
         bd.close()
         try {

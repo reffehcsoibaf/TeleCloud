@@ -28,18 +28,41 @@ const val TOPICO_RAIZ = "(raiz)"
 fun descreverMudancas(antes: Map<String, Assinatura>, depois: Map<String, Assinatura>): String {
     fun nome(c: String) = c.substringAfterLast('/')
     fun pasta(c: String) = if ('/' in c) c.substringBeforeLast('/') else "TeleCloud"
-    val novos = (depois.keys - antes.keys).toMutableList()
-    val removidos = (antes.keys - depois.keys).toMutableList()
+    val novos = (depois.keys - antes.keys).toMutableSet()
+    val removidos = (antes.keys - depois.keys).toMutableSet()
     val linhas = ArrayList<String>()
-    // Mesmo nome e tamanho que sumiu de um lugar e apareceu em outro: foi movido.
-    for (r in removidos.toList()) {
+
+    // Pasta renomeada: some um caminho e surge outro na mesma pasta com o mesmo conteúdo por dentro.
+    // Os itens de dentro mudam de caminho junto, então saem da conta (senão viraria uma lista de "movidos").
+    fun filhos(base: String, mapa: Map<String, Assinatura>, chaves: Set<String>): Map<String, Assinatura> =
+        chaves.filter { it.startsWith("$base/") }.associate { it.removePrefix("$base/") to mapa[it]!! }
+    for (r in removidos.filter { antes[it]!!.pasta }.sorted()) {
+        if (r !in removidos) continue // já levado por uma pasta renomeada acima dela
+        val dentro = filhos(r, antes, removidos)
+        val candidatas = novos.filter { depois[it]!!.pasta && pasta(it) == pasta(r) && filhos(it, depois, novos) == dentro }
+        val alvo = candidatas.singleOrNull() ?: continue
+        linhas += "Pasta ${nome(r)} renomeada para ${nome(alvo)}"
+        removidos.removeAll { it == r || it.startsWith("$r/") }
+        novos.removeAll { it == alvo || it.startsWith("$alvo/") }
+    }
+    // Arquivo renomeado (mesma pasta, mesmo tamanho e data) ou movido (outra pasta, mesmo nome e tamanho).
+    for (r in removidos.filter { !antes[it]!!.pasta }.sorted()) {
         val a = antes[r]!!
-        if (a.pasta) continue
-        val destino = novos.firstOrNull { n -> val d = depois[n]!!; !d.pasta && nome(n) == nome(r) && d.tamanho == a.tamanho }
-        if (destino != null) {
-            linhas += "${nome(r)} movido de ${pasta(r)} para ${pasta(destino)}"
+        val renomeado = novos.firstOrNull { n ->
+            val d = depois[n]!!
+            !d.pasta && pasta(n) == pasta(r) && d.tamanho == a.tamanho && d.modificado == a.modificado
+        }
+        if (renomeado != null) {
+            linhas += "${nome(r)} renomeado para ${nome(renomeado)}"
             removidos.remove(r)
-            novos.remove(destino)
+            novos.remove(renomeado)
+            continue
+        }
+        val movido = novos.firstOrNull { n -> val d = depois[n]!!; !d.pasta && nome(n) == nome(r) && d.tamanho == a.tamanho }
+        if (movido != null) {
+            linhas += "${nome(r)} movido de ${pasta(r)} para ${pasta(movido)}"
+            removidos.remove(r)
+            novos.remove(movido)
         }
     }
     for (n in novos.sorted()) linhas += if (depois[n]!!.pasta) "Nova pasta ${nome(n)}" else "Novo: ${nome(n)} em ${pasta(n)}"
@@ -283,6 +306,67 @@ class Nuvem(private val td: Td, private val ctx: Context) {
         ctx.contentResolver.update(uri, v, null, null)
     }
 
+    // ---------- organizar: nova pasta, renomear, apagar ----------
+
+    fun criarPasta(nome: String) = organizar("Criando a pasta $nome…", "Pasta ${nome.trim()} criada.") { idx, pai ->
+        val n = idx.criarPasta(pai, nome)
+        if (pai == RAIZ) topicoDe(n.nome) // pasta de primeiro nível = tópico do grupo, como no Windows
+        emptyList()
+    }
+
+    fun renomear(no: No, novoNome: String) =
+        organizar("Renomeando ${no.nome}…", "${no.nome} renomeado para ${novoNome.trim()}.") { idx, pai ->
+            val alvo = idx.filhoPorNome(pai, no.nome) ?: throw IllegalStateException("${no.nome} não existe mais.")
+            idx.renomear(alvo, pai, novoNome)
+            emptyList()
+        }
+
+    fun apagar(no: No) = organizar("Apagando ${no.nome}…", "${no.nome} apagado.") { idx, pai ->
+        val alvo = idx.filhoPorNome(pai, no.nome) ?: throw IllegalStateException("${no.nome} não existe mais.")
+        idx.apagar(alvo) // devolve as partes para apagar do Telegram depois de publicar o índice
+    }
+
+    /**
+     * Aplica uma mudança ao índice mais recente do grupo, publica o índice e só então apaga do Telegram as partes
+     * que sobraram (se o índice falhar ao publicar, nada foi apagado).
+     */
+    private fun organizar(fazendo: String, pronto: String, mudar: suspend (Indice, Long) -> List<String>) {
+        val nomes = _estado.value.caminho.map { it.nome }
+        escopo.launch {
+            emSegundoPlano { trava.withLock {
+                try {
+                    _transferencia.value = fazendo
+                    indice?.fechar()
+                    indice = null
+                    val idx = baixarIndice()
+                    indice = idx
+                    val pastas = idx.resolverPastas(nomes)
+                        ?: throw IllegalStateException("A pasta aberta não existe mais. Atualize a lista.")
+                    val pai = pastas.lastOrNull()?.id ?: RAIZ
+                    val refs = mudar(idx, pai)
+                    salvarIndice(idx)
+                    if (refs.isNotEmpty()) {
+                        runCatching { td.chamar(TdApi.DeleteMessages(grupo, refs.map { idDaTdlib(it) }.toLongArray(), true)) }
+                    }
+                    _estado.value = _estado.value.copy(caminho = pastas, itens = idx.listar(pai))
+                    _transferencia.value = pronto
+                } catch (e: Exception) {
+                    Registro.erro(ctx, fazendo, e)
+                    // A mudança não foi publicada: volta ao índice do grupo para a tela não mostrar algo que não existe.
+                    runCatching {
+                        indice?.fechar()
+                        indice = null
+                        val idx = baixarIndice()
+                        indice = idx
+                        val pastas = idx.resolverPastas(nomes) ?: emptyList()
+                        _estado.value = _estado.value.copy(caminho = pastas, itens = idx.listar(pastas.lastOrNull()?.id ?: RAIZ))
+                    }
+                    _transferencia.value = "Não foi possível: ${e.message ?: e}"
+                }
+            } }
+        }
+    }
+
     // ---------- envio ----------
 
     /** Envia arquivos para a pasta aberta no momento. */
@@ -456,22 +540,52 @@ class Nuvem(private val td: Td, private val ctx: Context) {
      *  documentos do tópico geral enxerga na hora. Junta as duas (a mais nova vale). */
     private suspend fun indicesNoGrupo(rapido: Boolean = false): List<TdApi.Message> {
         val achados = HashMap<Long, TdApi.Message>()
-        fun guardar(l: Array<TdApi.Message>) {
+        val diag = StringBuilder()
+        fun guardar(origem: String, l: Array<TdApi.Message>) {
+            diag.append("$origem=${l.size}[")
             for (m in l) {
                 val c = m.content
-                if (c is TdApi.MessageDocument && c.caption.text.trim() == MARCA_INDICE) achados[m.id] = m
+                val leg = (c as? TdApi.MessageDocument)?.caption?.text ?: ""
+                diag.append("${m.id shr 20}:${c.javaClass.simpleName.removePrefix("Message")}:${leg.take(20)} ")
+                if (c is TdApi.MessageDocument && leg.trim() == MARCA_INDICE) achados[m.id] = m
+            }
+            diag.append("] ")
+        }
+        try {
+            guardar(
+                "tipo",
+                td.chamar(
+                    TdApi.SearchChatMessages(grupo, TdApi.MessageTopicForum(1), "", null, 0, 0, 100, TdApi.SearchMessagesFilterDocument()),
+                ).messages,
+            )
+        } catch (e: Exception) {
+            diag.append("tipo=ERRO(${e.message}) ")
+        }
+        if (!rapido) {
+            try {
+                guardar("texto", td.chamar(TdApi.SearchChatMessages(grupo, null, MARCA_INDICE, null, 0, 0, 50, null)).messages)
+            } catch (e: Exception) {
+                diag.append("texto=ERRO(${e.message}) ")
             }
         }
-        guardar(
-            td.chamar(
-                TdApi.SearchChatMessages(grupo, TdApi.MessageTopicForum(1), "", null, 0, 0, 100, TdApi.SearchMessagesFilterDocument()),
-            ).messages,
-        )
-        if (!rapido) runCatching {
-            guardar(td.chamar(TdApi.SearchChatMessages(grupo, null, MARCA_INDICE, null, 0, 0, 50, null)).messages)
+        if (achados.isEmpty()) {
+            // Terceira via, sem busca: as mensagens mais recentes do grupo (o índice é publicado depois de cada
+            // mudança, então costuma estar entre as últimas).
+            try {
+                guardar("recentes", td.chamar(TdApi.GetChatHistory(grupo, 0, 0, 100, false)).messages)
+            } catch (e: Exception) {
+                diag.append("recentes=ERRO(${e.message}) ")
+            }
         }
+        if (achados.isEmpty() && !rapido) {
+            Registro.erro(ctx, "índice não achado: grupo=$grupo $diag", RuntimeException("diagnóstico"))
+        }
+        ultimoDiagnostico = diag.toString()
         return achados.values.sortedByDescending { it.id }
     }
+
+    @Volatile
+    private var ultimoDiagnostico = ""
 
     private var vigia: kotlinx.coroutines.Job? = null
 
@@ -480,14 +594,22 @@ class Nuvem(private val td: Td, private val ctx: Context) {
     private fun vigiar() {
         if (vigia?.isActive == true) return
         vigia = escopo.launch {
+            var volta = 0
             while (true) {
                 kotlinx.coroutines.delay(10_000)
+                volta++
                 try {
                     if (indice == null || trava.isLocked || grupo == 0L) continue
-                    val m = indicesNoGrupo(rapido = true).firstOrNull() ?: continue
-                    if (m.id != indiceConhecido) atualizar(automatico = m.id)
-                } catch (_: Exception) {
-                    // sem rede agora: tenta de novo na próxima volta
+                    val m = indicesNoGrupo(rapido = true).firstOrNull()
+                    if (volta % 12 == 1) {
+                        Registro.info(ctx, "vigia: topo=${m?.id?.shr(20)} conhecido=${indiceConhecido shr 20} :: ${ultimoDiagnostico.take(300)}")
+                    }
+                    if (m != null && m.id != indiceConhecido) {
+                        Registro.info(ctx, "vigia: índice novo ${m.id shr 20} (conhecido ${indiceConhecido shr 20}); atualizando")
+                        atualizar(automatico = m.id)
+                    }
+                } catch (e: Exception) {
+                    Registro.info(ctx, "vigia: falhou ${e.message}")
                 }
             }
         }

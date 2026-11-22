@@ -12,8 +12,8 @@ android {
         applicationId = "br.com.fabioscheffer.telecloud"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "2026.11.22.15"
+        versionCode = 22
+        versionName = "2026.11.22.20"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
 
         // As chaves api_id/api_hash vêm do config.json do TeleCloud do Windows (fora do git) e ficam só
