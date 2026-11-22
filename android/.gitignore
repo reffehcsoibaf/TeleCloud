@@ -1,0 +1,6 @@
+tdlib-baixado/
+local.properties
+.gradle/
+build/
+app/build/
+*.apk
